@@ -1,14 +1,23 @@
 ### Ukrainian Virtual Machine
-### WIP
-
-Simple VM representation POWERED BY UKRAINIAN LANGUAGE AND UKRAINIAN SPIRIT and other stuff, you know.
-
-I really want to call this thing UASM, but there is already one.  
+### Very much WIP
 
 Source of inspiration: https://github.com/tsoding/bm
 
-The goal is to create a basic computer simulation and provide an interface to interact with it using ukrainian language  (yea) in the style of an assembly family.
+Goals:
+- Learn things.
+- Build a simple virtual machine.
+- Build an assembly for this VM.
+- Try to create a programming language using the assembly of my VM.
+
+And all that great stuff will be interfaced using Ukrainian (yeah, boy).  
 
 Progress:
-- [X] Stack
-- [x] Basic instructions for the top values of the stack: Push, Sum, Substruct, Divide, Multiply
+
+-  [x] Basic stack implementation:
+```
+Basic instructions: Push, Drop, Dup, DupAt
+Binary instructions: Sub, Sum, Mul, Div, Eq
+Flow instructions: Jump, JumpIf
+```
+- [ ] TODO
+

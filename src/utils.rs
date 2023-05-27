@@ -1,13 +1,18 @@
-use crate::{Instruction, Panic, Value, PROGRAM_INST_CAPACITY, VM};
+use crate::{Instruction, Panic, VM };
 use std::{error, fmt};
 
 impl fmt::Display for Instruction {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use Instruction::*;
         match self {
-            Push(v) => write!(f, "Стак-Доповнення({v})"),
-            Jump(i) => write!(f, "Повтор-Інструкції({i})"),
-            Eof => write!(f, "Кінцева-Інструкція"),
+            Nop => write!(f, "<Немає_Інструкції>"),
+            Push(v) => write!(f, "Стек_Доповнення({v})"),
+            Drop => write!(f, "Звільнення_Верхнього_Значення"),
+            Dup => write!(f, "Копія_Верхнього_Значення"),
+            DupAt(addr) => write!(f, "Копія_За_Адр({addr})"),
+            Jump(addr) => write!(f, "Крок_До_Адр({addr})"),
+            JumpIf(addr) => write!(f, "Умова_Крок_До_Адр({addr})"),
+            Eq => write!(f, "Рівність"),
             Sum => write!(f, "Сумма"),
             Sub => write!(f, "Віднімання"),
             Mul => write!(f, "Множення"),
@@ -20,45 +25,33 @@ impl fmt::Display for Panic {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use Panic::*;
         match self {
-            StackOverflow => write!(f, "Стак переповнений"),
-            StackUnderflow => write!(f, "Спроба дістати неіснуюче значення зі стаку"),
-            EofReached => write!(f, "Досягнено кінцевої інструкції"),
-            InstLimitkOverflow(inst_size) => write!(
-                f,
-                "Перевищено ліміт інструкцій: {inst_size} із доступних {PROGRAM_INST_CAPACITY}"
-            ),
-            DivByZero => write!(f, "Спроба ділення на нуль"),
-            IncompatibleValue { inst, val_a, val_b } => write!(
-                f,
-                "Неможливо виконати інструкцію {inst} для значень {val_a} та {val_b}"
-            ),
+            StackOverflow => write!(f, "Переповнений_Стек"),
+            StackUnderflow => write!(f, "Незаповненість_Стека"),
+            InvalidOperand => write!(f, "Невірний_Операнд"),
+            InstLimitkOverflow => write!(f, "Перевищено_Ліміт_Інструкцій"),
+            DivByZero => write!(f, "Ділення_На_Нуль"),
         }
     }
 }
 
 impl error::Error for Panic {}
 
-impl fmt::Display for Value {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        use Value::*;
-        match self {
-            Number(n) => write!(f, "Число({n})"),
-            Null => write!(f, "<Порожньо>"),
-        }
-    }
-}
-
 impl fmt::Display for VM {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "[СТАК({capa})] {value}  ",
+            "СТЕК [{capa}]\n    АДР: {addr} ЗНАЧ: {value}  ",
+            capa = self.stack_size,
+            addr =  if self.stack_size == 0 {
+                0
+            } else {
+                self.stack_size - 1
+            },
             value = if self.stack_size != 0 {
                 self.stack[self.stack_size - 1]
             } else {
                 self.stack[self.stack_size]
             },
-            capa =self.stack_size,
         )
     }
 }
