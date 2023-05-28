@@ -1,7 +1,6 @@
 mod utils;
 use std::{
     fs,
-    io::{self, Read, Write},
     isize,
     path::Path,
 };
@@ -9,10 +8,6 @@ use std::{
 const VM_STACK_CAPACITY: usize = 1024;
 const PROGRAM_INST_CAPACITY: usize = 1024;
 const INST_CHUNCK_SIZE: usize = 9;
-
-// TODO: test to write some instructions to file and load
-// TODO: macro rule for creating enumeration along with const variants count and index array
-// TODO: need a way to test the instructions
 
 macro_rules! inst {
     ($kind:tt $operand:expr) => {
@@ -30,6 +25,12 @@ macro_rules! inst {
     };
 }
 
+macro_rules! prog {
+    ($($inst:tt $($operand:expr)?),*$(,)?) => {
+        [$(inst!($inst $($operand)?),)*]
+    };
+}
+
 #[derive(Copy, Clone, Debug)]
 pub enum Panic {
     StackOverflow,
@@ -38,8 +39,8 @@ pub enum Panic {
     InvalidOperand,
     InstLimitkOverflow,
     InvalidInstruction,
-    ReadFile,
-    WriteToFile,
+    ReadFileErr,
+    WriteToFileErr,
     DivByZero,
 }
 
@@ -85,13 +86,6 @@ impl Instruction {
         InstructionKind::Sum,
     ];
 
-    fn nop() -> Self {
-        Self {
-            kind: InstructionKind::Nop,
-            operand: 0,
-        }
-    }
-
     fn serialize(&self) -> [u8; INST_CHUNCK_SIZE] {
         let mut se = [0; 9];
         se[0] = self.kind as u8;
@@ -131,52 +125,37 @@ pub struct VM {
     inst_ptr: usize,
 }
 
+
 impl VM {
     fn init() -> Self {
         Self {
             stack: [0; VM_STACK_CAPACITY],
             stack_size: 0,
-
-            program: [Instruction::nop(); PROGRAM_INST_CAPACITY],
+            program: [Instruction {
+                kind: InstructionKind::Nop,
+                operand: 0,
+            }; PROGRAM_INST_CAPACITY],
             program_size: 0,
             inst_ptr: 0,
         }
     }
 
-    fn program_save_to_file<P: AsRef<Path>>(&self, file: P) -> Result<(), Panic> {
-        let mut buf = Vec::<SerializedInst>::new();
-
-        for (i, inst) in self.program.iter().enumerate() {
-            buf.push(inst.serialize());
-        }
-
-        if let Err(_) = fs::write(file.as_ref(), &buf.concat()) {
-            return Err(Panic::WriteToFile);
-        }
-
-        Ok(())
-    }
-
-    fn program_load_from_file<P: AsRef<Path>>(&mut self, path: P) -> Result<(), Panic> {
-        let mut f = match fs::OpenOptions::new().read(true).open(path.as_ref()) {
-            Ok(f) => f,
-            Err(_) => return Err(Panic::ReadFile),
+    fn load_from_file<P: AsRef<Path>>(&mut self, path: P) -> Result<(), Panic> {
+        let buf = match fs::read(path.as_ref()) {
+            Ok(i) => i,
+            Err(_) => return Err(Panic::ReadFileErr),
         };
 
-        let mut buf = Vec::<u8>::new();
-        if let Err(_) = f.read(&mut buf) {
-            return Err(Panic::ReadFile);
-        }
-
         let mut program = Vec::<Instruction>::new();
-        for inst in buf.chunks(9) {
+        for inst in buf.chunks(INST_CHUNCK_SIZE) {
+            // TODO: maybe handle this unwrap
             program.push(Instruction::deserialize(inst.try_into().unwrap())?);
         }
 
-        self.program_load_from_memmory(program.as_slice())
+        self.load_from_memmory(program.as_slice())
     }
 
-    fn program_load_from_memmory(&mut self, program: &[Instruction]) -> Result<(), Panic> {
+    fn load_from_memmory(&mut self, program: &[Instruction]) -> Result<(), Panic> {
         let program_size = program.len();
         self.program_size = program_size;
 
@@ -191,7 +170,7 @@ impl VM {
         Ok(())
     }
 
-    fn program_execute(&mut self) -> Result<(), Panic> {
+    fn execute(&mut self) -> Result<(), Panic> {
         while self.inst_ptr < self.program_size {
             self.instruction_execute()?;
             self.inst_ptr += 1;
@@ -220,7 +199,7 @@ impl VM {
                 Ok(())
             }
             DupAt => {
-                let addr = inst.operand + 1;
+                let addr = inst.operand;
                 if addr < 0 || addr as usize > self.inst_ptr {
                     return Err(Panic::InvalidOperand);
                 }
@@ -273,12 +252,11 @@ impl VM {
                     Ok(b / a)
                 }
             }),
-            _ => Err(Panic::InvalidInstruction),
         }
     }
 
     fn stack_push(&mut self, value: isize) -> Result<(), Panic> {
-        if value > isize::MAX || value < isize::MIN {
+        if !(isize::MIN..=isize::MAX).contains(&value) {
             Err(Panic::IntegerOverflow)
         } else if self.stack_size == VM_STACK_CAPACITY {
             Err(Panic::StackOverflow)
@@ -314,26 +292,36 @@ impl VM {
     }
 }
 
+fn program_save_to_file<P: AsRef<Path>>(file: P, program: &[Instruction]) -> Result<(), Panic> {
+    let mut buf = Vec::<SerializedInst>::new();
+
+    for inst in program.iter() {
+        buf.push(inst.serialize());
+    }
+
+    if fs::write(file.as_ref(), buf.concat()).is_err() {
+        return Err(Panic::WriteToFileErr);
+    }
+
+    Ok(())
+}
+
+
 fn main() {
     use InstructionKind::*;
 
-    // let program = [
-    //     inst!(Push 1),
-    //     inst!(Dup),
-    // ];
+    let program = prog! {
+        Push 1,
+        Push 2,
+        Push 3,
+        DupAt 0,
+    };
+
+    program_save_to_file("./test", &program).unwrap();
 
     let mut state = VM::init();
-    state.program_load_from_file("./test").unwrap();
-    // if let Err(vm_err) = state.program_load_from_memmory(&program) {
-    //     eprintln!("[!] ПАНІКА: {vm_err}");
-    // }
-
-    state.program_save_to_file("./test").unwrap();
-
-    if let Err(vm_err) = state.program_execute() {
-        eprintln!("[!] ПАНІКА: {vm_err}");
-    }
-
+    state.load_from_file("./test").unwrap(); 
+    state.execute().unwrap();
     state.program_dump(0, state.stack_size);
     state.stack_dump(0, state.program_size);
 }

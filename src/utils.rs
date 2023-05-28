@@ -41,8 +41,8 @@ impl fmt::Display for Panic {
             InvalidOperand => write!(f, "Невірний_Операнд"),
             InstLimitkOverflow => write!(f, "Перевищено_Ліміт_Інструкцій"),
             InvalidInstruction => write!(f, "Нелегальна_Інструкція"),
-            ReadFile => write!(f, "Неможливо_Прочитати_Файл"),
-            WriteToFile => write!(f, "Помилка_Запусу_До_Файлу"),
+            ReadFileErr => write!(f, "Неможливо_Прочитати_Файл"),
+            WriteToFileErr => write!(f, "Помилка_Запусу_До_Файлу"),
             DivByZero => write!(f, "Ділення_На_Нуль"),
         }
     }
