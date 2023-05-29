@@ -1,11 +1,36 @@
-use crate::{Instruction, InstructionKind, Panic, VM};
+use crate::{Instruction, InstructionKind, Panic };
 use std::{error, fmt};
+
+#[macro_export]
+macro_rules! inst {
+    ($kind:tt $operand:expr) => {
+        Instruction {
+            kind: $kind,
+            operand: Some($operand),
+        }
+    };
+
+    ($kind:expr) => {
+        Instruction {
+            kind: $kind,
+            operand: None,
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! prog {
+    ($($inst:tt $($operand:expr)?),*$(,)?) => {
+        [$(inst!($inst $($operand)?),)*]
+    };
+}
+
 
 impl fmt::Display for Instruction {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use InstructionKind::*;
         match self.kind {
-            Push | DupAt | JumpIf | Jump => write!(f, "{}({})", self.kind, self.operand),
+            Push | DupAt | JumpIf | Jump => write!(f, "{}({})", self.kind, self.operand.unwrap()),
             _ => write!(f, "{}", self.kind),
         }
     }
@@ -15,7 +40,7 @@ impl fmt::Display for InstructionKind {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use InstructionKind::*;
         match self {
-            Nop => write!(f, "<Немає_Інструкції>"),
+            Nop => write!(f, "_"),
             Push => write!(f, "Стек_Доповнення"),
             Drop => write!(f, "Звільнення_Верхнього_Значення"),
             Dup => write!(f, "Копія_Верхнього_Значення"),
@@ -30,6 +55,7 @@ impl fmt::Display for InstructionKind {
         }
     }
 }
+
 
 impl fmt::Display for Panic {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -49,23 +75,3 @@ impl fmt::Display for Panic {
 }
 
 impl error::Error for Panic {}
-
-impl fmt::Display for VM {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "СТЕК [{capa}]\n    АДР: {addr} ЗНАЧ: {value}  ",
-            capa = self.stack_size,
-            addr = if self.stack_size == 0 {
-                0
-            } else {
-                self.stack_size - 1
-            },
-            value = if self.stack_size != 0 {
-                self.stack[self.stack_size - 1]
-            } else {
-                self.stack[self.stack_size]
-            },
-        )
-    }
-}
