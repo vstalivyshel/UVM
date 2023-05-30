@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod test;
 mod utils;
 use std::{fs, isize, path::Path};
 
@@ -21,8 +23,8 @@ pub enum Panic {
 }
 
 #[repr(u8)]
-#[derive(Copy, Clone, Debug)]
-enum InstructionKind {
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum InstructionKind {
     Nop = 0,
     Drop = 1,
     Dup = 2,
@@ -39,20 +41,20 @@ enum InstructionKind {
 
 #[derive(Copy, Clone, Debug)]
 pub struct Instruction {
-    kind: InstructionKind,
-    operand: Option<isize>,
+    pub kind: InstructionKind,
+    pub operand: Option<isize>,
 }
 
-type SerializedInst = [u8; INST_CHUNCK_SIZE];
+pub type SerializedInst = [u8; INST_CHUNCK_SIZE];
 
 impl Instruction {
-    fn serialize(&self) -> Result<SerializedInst, Panic> {
+    pub fn serialize(&self) -> Result<SerializedInst, Panic> {
         let mut se = [0; INST_CHUNCK_SIZE];
         se[0] = self.kind as u8;
         use InstructionKind::*;
         match self.kind {
             Push | DupAt | JumpIf | Jump => {
-                // Tenth byte indicates that there is supposed to be an operand,
+                // Tenth byte tells if there is supposed to be an operand
                 se[INST_CHUNCK_SIZE - 1] = 1;
                 for (i, b) in self
                     .operand
@@ -106,9 +108,9 @@ pub struct VM {
     stack: [isize; VM_STACK_CAPACITY],
     stack_size: usize,
     program: [Instruction; PROGRAM_INST_CAPACITY],
-    inst_limit: Option<usize>,
     program_size: usize,
     inst_ptr: usize,
+    inst_limit: Option<usize>,
     debug: (bool, bool),
 }
 
@@ -121,39 +123,104 @@ impl VM {
                 kind: InstructionKind::Nop,
                 operand: None,
             }; PROGRAM_INST_CAPACITY],
-            inst_limit: None,
             program_size: 0,
             inst_ptr: 0,
+            inst_limit: None,
             debug: (false, false),
         }
     }
 
-    fn load_from_file<P: AsRef<Path>>(&mut self, path: P) -> Result<(), Panic> {
+    fn load_from_memmory(&mut self, program: &[Instruction]) -> Result<(), Panic> {
+        let len = program.len();
+        if len > PROGRAM_INST_CAPACITY {
+            return Err(Panic::InstLimitkOverflow);
+        }
+
+        self.program_size = len;
+        for i in 0..len {
+            self.program[i] = program[i];
+        }
+
+        Ok(())
+    }
+
+    fn deserialize_from_file<P: AsRef<Path>>(&mut self, path: P) -> Result<(), Panic> {
         let buf = match fs::read(path.as_ref()) {
             Ok(i) => i,
             Err(_) => return Err(Panic::ReadFileErr),
         };
 
-        let mut program = Vec::<Instruction>::new();
-        for inst in buf.chunks(INST_CHUNCK_SIZE) {
+        let mut size = 0;
+        for (i, inst) in buf.chunks(INST_CHUNCK_SIZE).enumerate() {
             // TODO: maybe handle this unwrap
-            program.push(Instruction::deserialize(inst.try_into().unwrap())?);
+            self.program[i] = Instruction::deserialize(inst.try_into().unwrap())?;
+            size += 1;
         }
+        self.program_size = size;
 
-        self.load_from_memmory(program.as_slice())
+        Ok(())
     }
 
-    fn load_from_memmory(&mut self, program: &[Instruction]) -> Result<(), Panic> {
-        let program_size = program.len();
-        self.program_size = program_size;
+    pub fn serialize_into_file<P: AsRef<Path>>(&self, file: P) -> Result<(), Panic> {
+        let mut buf = Vec::<SerializedInst>::new();
 
-        if program_size > PROGRAM_INST_CAPACITY {
-            return Err(Panic::InstLimitkOverflow);
+        for inst in self.program.iter() {
+            buf.push(inst.serialize()?);
         }
 
-        for (i, inst) in program.iter().enumerate() {
-            self.program[i] = *inst;
+        if fs::write(file.as_ref(), buf.concat()).is_err() {
+            return Err(Panic::WriteToFileErr);
         }
+
+        Ok(())
+    }
+
+    pub fn disassemble_from_file<P: AsRef<Path>>(&mut self, path: P) -> Result<(), Panic> {
+        let program = if let Ok(p) = fs::read_to_string(path.as_ref()) {
+            p
+        } else {
+            return Err(Panic::ReadFileErr);
+        };
+
+        let mut stream = program.split_whitespace();
+
+        let mut idx = 0;
+        while let Some(token) = stream.next() {
+            use InstructionKind::*;
+            let (kind, with_operand) = match token {
+                "неоп" => (Nop, false),
+                "кинь" => (Drop, false),
+                "копію" => (Dup, false),
+                "клади" => (Push, true),
+                "копію_у" => (DupAt, true),
+                "крок_рівн" => (JumpIf, true),
+                "крок" => (Jump, true),
+                "рівн" => (Eq, false),
+                "різн" => (Sub, false),
+                "множ" => (Mul, false),
+                "діли" => (Div, false),
+                "сума" => (Sum, false),
+                _ => return Err(Panic::InvalidInstruction),
+            };
+
+            let operand = if with_operand {
+                match stream.next() {
+                    Some(i) => match i.parse::<isize>() {
+                        Ok(i) => Some(i),
+                        _ => return Err(Panic::InvalidOperand),
+                    },
+                    _ => return Err(Panic::InvalidOperand),
+                }
+            } else {
+                None
+            };
+
+            self.program[idx] = Instruction { kind, operand };
+
+            idx += 1;
+        }
+
+        self.program_size = idx;
 
         Ok(())
     }
@@ -167,7 +234,7 @@ impl VM {
         };
 
         while self.inst_ptr < self.program_size && inst_count != limit {
-            self.instruction_execute()?;
+            self.execute_instruction()?;
             if dbg_inst {
                 println!(
                     "+ ІНСТ {ptr} : {inst}",
@@ -194,7 +261,7 @@ impl VM {
         Ok(())
     }
 
-    fn instruction_execute(&mut self) -> Result<(), Panic> {
+    fn execute_instruction(&mut self) -> Result<(), Panic> {
         fn push_from<F>(state: &mut VM, f: F) -> Result<(), Panic>
         where
             F: Fn(isize, isize) -> Result<isize, Panic>,
@@ -252,8 +319,8 @@ impl VM {
                     return Err(Panic::StackUnderflow);
                 }
 
-                let a = self.stack[self.stack_size];
-                let b = self.stack[self.stack_size - 1];
+                let a = self.stack[self.stack_size - 1];
+                let b = self.stack[self.stack_size - 2];
 
                 self.stack_push(if a == b { 1 } else { 0 })
             }
@@ -294,25 +361,12 @@ impl VM {
     }
 }
 
-fn program_save_to_file<P: AsRef<Path>>(file: P, program: &[Instruction]) -> Result<(), Panic> {
-    let mut buf = Vec::<SerializedInst>::new();
-
-    for inst in program.iter() {
-        buf.push(inst.serialize().unwrap());
-    }
-
-    if fs::write(file.as_ref(), buf.concat()).is_err() {
-        return Err(Panic::WriteToFileErr);
-    }
-
-    Ok(())
-}
-
 fn print_usage(msg: Option<&str>) {
     eprintln!(
         "./uvm [ОПЦ] <ФАЙЛ>
 <ФАЙЛ> - файл з байткодом інструкцій УВМ
 [ОПЦ]:
+    -b - вказаний файл є байткодом
     -l <ЧИС> - встановити ліміт на кількість виконуваних інструкцій
     -ds - показати всі зміни стеку на протязі виконня програми
     -di - показати лист виконаних інструкцій
@@ -327,10 +381,12 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let mut state = VM::init();
     let mut file: Option<String> = None;
+    let mut binary = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "-h" => return print_usage(None),
+            "-b" => binary = true,
             "-ds" => state.debug.0 = true,
             "-di" => state.debug.1 = true,
             "-l" => match args.next() {
@@ -338,7 +394,7 @@ fn main() {
                     Ok(l) => state.inst_limit = Some(l),
                     _ => return eprintln!("[!] Встановлений неправельний ліміт"),
                 },
-                _ => return eprintln!("[!] Значення для ліміт не вказано"),
+                _ => return eprintln!("[!] Значення для ліміту не вказано"),
             },
             f if Path::new(&f).is_file() => {
                 file = Some(f.to_string());
@@ -348,7 +404,11 @@ fn main() {
     }
 
     if let Some(f) = file {
-        if let Err(e) = state.load_from_file(&f) {
+        if binary {
+            if let Err(e) = state.deserialize_from_file(&f) {
+                eprintln!("[!] {e}");
+            }
+        } else if let Err(e) = state.disassemble_from_file(&f) {
             eprintln!("[!] {e}");
         }
 
