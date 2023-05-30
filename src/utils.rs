@@ -1,4 +1,4 @@
-use crate::{Instruction, InstructionKind, Panic };
+use crate::{Instruction, InstructionKind, Panic, Value, PROGRAM_INST_CAPACITY};
 use std::{error, fmt};
 
 #[macro_export]
@@ -6,14 +6,14 @@ macro_rules! inst {
     ($kind:tt $operand:expr) => {
         Instruction {
             kind: $kind,
-            operand: Some($operand),
+            operand: $operand,
         }
     };
 
     ($kind:expr) => {
         Instruction {
             kind: $kind,
-            operand: None,
+            operand: Value::Null,
         }
     };
 }
@@ -25,13 +25,22 @@ macro_rules! prog {
     };
 }
 
-
 impl fmt::Display for Instruction {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use InstructionKind::*;
         match self.kind {
-            Push | DupAt | JumpIf | Jump => write!(f, "{}({})", self.kind, self.operand.unwrap()),
+            Push | DupAt | JumpIf | Jump => write!(f, "{}({})", self.kind, self.operand),
             _ => write!(f, "{}", self.kind),
+        }
+    }
+}
+
+impl fmt::Display for Value {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use Value::*;
+        match self {
+            Int(i) => write!(f, "Число({i})"),
+            Null => write!(f, "<Значення Відсутнє>"),
         }
     }
 }
@@ -41,12 +50,12 @@ impl fmt::Display for InstructionKind {
         use InstructionKind::*;
         match self {
             Nop => write!(f, "_"),
-            Push => write!(f, "Стек_Доповнення"),
-            Drop => write!(f, "Звільнення_Верхнього_Значення"),
-            Dup => write!(f, "Копія_Верхнього_Значення"),
-            DupAt => write!(f, "Копія_За_Адр"),
-            Jump => write!(f, "Крок_До_Адр"),
-            JumpIf => write!(f, "Умова_Крок_До_Адр"),
+            Push => write!(f, "Стек Доповнення"),
+            Drop => write!(f, "Звільнення Верхнього Значення"),
+            Dup => write!(f, "Копія Верхнього Значення"),
+            DupAt => write!(f, "Копія За Адр"),
+            Jump => write!(f, "Крок До Адр"),
+            JumpIf => write!(f, "Умова Крок До Адр"),
             Eq => write!(f, "Рівність"),
             Sum => write!(f, "Сумма"),
             Sub => write!(f, "Віднімання"),
@@ -56,20 +65,29 @@ impl fmt::Display for InstructionKind {
     }
 }
 
-
 impl fmt::Display for Panic {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use Panic::*;
         match self {
-            StackOverflow => write!(f, "Переповнений_Стек"),
-            StackUnderflow => write!(f, "Незаповненість_Стека"),
-            IntegerOverflow => write!(f, "Перевищено_Ліміт_Цілого_Числа"),
-            InvalidOperand => write!(f, "Невірний_Операнд"),
-            InstLimitkOverflow => write!(f, "Перевищено_Ліміт_Інструкцій"),
-            InvalidInstruction => write!(f, "Нелегальна_Інструкція"),
-            ReadFileErr => write!(f, "Неможливо_Прочитати_Файл"),
-            WriteToFileErr => write!(f, "Помилка_Запусу_До_Файлу"),
-            DivByZero => write!(f, "Ділення_На_Нуль"),
+            StackOverflow => write!(f, "Переповнений Стек"),
+            StackUnderflow => write!(f, "Незаповненість Стека"),
+            IntegerOverflow => write!(f, "Перевищено Ліміт Цілого Числа"),
+            InvalidOperandValue { operand, inst } => {
+                write!(f, "Невірний Операнд {operand} для інструкціЇ {inst}")
+            }
+            IlligalInstructionOperands { inst, val_a, val_b } => write!(
+                f,
+                "Неможливо виконати {inst} для значень {val_b} та {val_a}"
+            ),
+            InstLimitkOverflow(size) => write!(
+                f,
+                "Перевищено Ліміт Інструкцій: {size} з доступних {PROGRAM_INST_CAPACITY}"
+            ),
+            InvalidBinaryInstruction => write!(f, "Нелегальна Інструкція"),
+            InvalidInstruction(inst) => write!(f, "Нелегальна Інструкція: {inst}"),
+            ReadFileErr(err) => write!(f, "Неможливо Прочитати Файл: {err}"),
+            WriteToFileErr(err) => write!(f, "Помилка Запусу До Файлу: {err}"),
+            DivByZero => write!(f, "Ділення На Нуль"),
         }
     }
 }

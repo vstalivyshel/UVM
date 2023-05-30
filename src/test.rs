@@ -1,16 +1,17 @@
-use crate::{inst, prog, Instruction, InstructionKind, VM};
+use crate::{inst, prog, Instruction, InstructionKind, Value, VM};
 use std::fs;
 
 #[test]
 fn load_from_memmory() {
     use InstructionKind::*;
-    let program = prog!{
-        Push 1,
-        Push 2,
+    use Value::*;
+    let program = prog! {
+        Push Int(1),
+        Push Int(2),
         Sum,
     };
 
-    let expected_top = 3;
+    let expected_top = Int(3);
     let expected_stack_size = 1;
 
     let mut state = VM::init();
@@ -28,7 +29,7 @@ fn load_from_memmory() {
 fn serialize_and_load_from_file() {
     let se_inst = Instruction {
         kind: InstructionKind::Push,
-        operand: Some(69),
+        operand: Value::Int(69),
     }
     .serialize();
 
@@ -42,7 +43,7 @@ fn serialize_and_load_from_file() {
     assert!(res.is_ok());
     assert!(state.program_size == 1);
     assert!(state.program[state.program_size - 1].kind == InstructionKind::Push);
-    assert!(state.program[state.program_size - 1].operand == Some(69));
+    assert!(state.program[state.program_size - 1].operand == Value::Int(69));
 }
 
 #[test]
@@ -55,15 +56,11 @@ fn disassemble() {
 рівн";
 
     let file = "tests/dis_test";
-    fs::write(
-        file,
-        prog.as_bytes(),
-    )
-    .expect("write to test file");
+    fs::write(file, prog.as_bytes()).expect("write to test file");
     let mut state = VM::init();
     state.disassemble_from_file(file).expect("disassemble");
     state.execute().expect("exec program");
     assert!(state.program_size == 5);
     assert!(state.stack_size == 3);
-    assert!(state.stack[state.stack_size - 1] == 1);
+    assert!(state.stack[state.stack_size - 1] == Value::Int(1));
 }
