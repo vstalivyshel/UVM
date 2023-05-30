@@ -29,7 +29,7 @@ Flow instructions: Jump, JumpIf
 -ds - dump stack values after each executed instruction  
 ```
 
-- [ ] Assembler and disassembler for USM (human-readable format writing for instructions)
+- [ ] Assembler and disassembler for USM (human-readable format for writing the instructions)
 
 - [ ] TODO
 
