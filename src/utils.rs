@@ -29,7 +29,15 @@ impl fmt::Display for Instruction {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use InstructionKind::*;
         match self.kind {
-            Push | DupAt | JumpIf | Jump => write!(f, "{}({})", self.kind, self.operand),
+            Push | DupAt | Jump => {
+                write!(
+                    f,
+                    "{cond_mark}{kind}({oper})",
+                    kind = self.kind,
+                    cond_mark = if self.conditional { "? " } else { "" },
+                    oper = self.operand.into_option().unwrap()
+                )
+            }
             _ => write!(f, "{}", self.kind),
         }
     }
@@ -40,7 +48,7 @@ impl fmt::Display for Value {
         use Value::*;
         match self {
             Int(i) => write!(f, "Число({i})"),
-            Null => write!(f, "<Значення Відсутнє>"),
+            Null => write!(f, "<Відсутнє Значення>"),
         }
     }
 }
@@ -50,14 +58,13 @@ impl fmt::Display for InstructionKind {
         use InstructionKind::*;
         match self {
             Nop => write!(f, "_"),
-            Push => write!(f, "Стек Доповнення"),
-            Drop => write!(f, "Звільнення Верхнього Значення"),
-            Dup => write!(f, "Копія Верхнього Значення"),
-            DupAt => write!(f, "Копія За Адр"),
-            Jump => write!(f, "Крок До Адр"),
-            JumpIf => write!(f, "Умова Крок До Адр"),
+            Push => write!(f, "Стек_Доповнення"),
+            Drop => write!(f, "Звільнення_Верхнього_Значення"),
+            Dup => write!(f, "Копія_Верхнього_Значення"),
+            DupAt => write!(f, "Копія_За_Адр"),
+            Jump => write!(f, "Крок_До_Адр"),
             Eq => write!(f, "Рівність"),
-            Sum => write!(f, "Сумма"),
+            Sum => write!(f, "Сума"),
             Sub => write!(f, "Віднімання"),
             Mul => write!(f, "Множення"),
             Div => write!(f, "Ділення"),
@@ -73,11 +80,14 @@ impl fmt::Display for Panic {
             StackUnderflow => write!(f, "Незаповненість Стека"),
             IntegerOverflow => write!(f, "Перевищено Ліміт Цілого Числа"),
             InvalidOperandValue { operand, inst } => {
-                write!(f, "Невірний Операнд {operand} для інструкціЇ {inst}")
+                write!(
+                    f,
+                    "Невірний Операнд \"{operand}\" для інструкціЇ \"{inst}\""
+                )
             }
             IlligalInstructionOperands { inst, val_a, val_b } => write!(
                 f,
-                "Неможливо виконати {inst} для значень {val_b} та {val_a}"
+                "Неможливо виконати \"{inst}\" для значень \"{val_b}\" та \"{val_a}\""
             ),
             InstLimitkOverflow(size) => write!(
                 f,

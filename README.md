@@ -30,15 +30,39 @@ Flow instructions: Jump, JumpIf  
 -ds - dump stack values after each executed instruction  
 ```
 
-- [ ] Assembler and disassembler for USM (human-readable format for writing the instructions)
+- [ ] Assembly
 ```
 # This is not the final version
 
-клади 60 #  push 60 on the stack
-клади 9 # push 9 on the stack
-сума # sum the top values of the stack
-копію # duplicate the top value
-рівн # push 1 if two top values are equal, otherwise, push 0
+клади 60 	#  push 60 on the stack
+клади 9  	# push 9 on the stack
+сума     	# sum the top values of the stack
+копію    	# duplicate the top value
+рівн     	# push 1 if two top values are equal, otherwise, push 0
+
+# Everything that have ':' as suffix will be treaded as a label,
+# which will be expanded to the instuction address that is labeled
+собака: клади 1 # Instruction 0
+собака2:
+	клади 2     # 1
+собака3:
+
+клади 3         # 2
+
+# After labeling insruction you can use 'крок' (jump) with the label name as an argument
+крок собака3 # Jump to instruction 2
+крок собака2 # Jump to 1
+крок собака # Jump to 0
+
+# Each instruction can have '?' as suffix, which indicates that
+# it will be execute only if top value of the stack not equales to 0
+клади 1 	# push 1 on top of the stack
+клади 2 	# push 2
+рівн    	# check for equality: false, so push 0
+сума?   	# this instruction will be skiped: top == 0
+клади 2 	# the value doesn't need to be 1 to represend true statement
+сума?   	# this will be executed: 2 != 0
+
 ```
 - [ ] Ua-En dictionary for the instructions
 

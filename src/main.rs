@@ -1,11 +1,14 @@
-#[cfg(test)]
-mod test;
+mod array;
+mod instruction;
 mod utils;
+
+use array::Array;
+
+use crate::instruction::{Instruction, InstructionKind, SerializedInst, Value, INST_CHUNCK_SIZE};
 use std::{fs, io, isize, path::Path};
 
 const VM_STACK_CAPACITY: usize = 1024;
 const PROGRAM_INST_CAPACITY: usize = 1024;
-const INST_CHUNCK_SIZE: usize = 10;
 
 #[derive(Debug)]
 pub enum Panic {
@@ -29,112 +32,9 @@ pub enum Panic {
     DivByZero,
 }
 
-#[repr(u8)]
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub enum InstructionKind {
-    Nop = 0,
-    Drop = 1,
-    Dup = 2,
-    Push = 3,
-    DupAt = 4,
-    JumpIf = 5,
-    Jump = 6,
-    Eq = 7,
-    Sub = 8,
-    Mul = 9,
-    Div = 10,
-    Sum = 11,
-}
-
-#[derive(Copy, Clone, Debug)]
-pub struct Instruction {
-    pub kind: InstructionKind,
-    pub operand: Value,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub enum Value {
-    Int(isize),
-    Null,
-}
-
-impl Value {
-    fn into_option(self) -> Option<isize> {
-        match self {
-            Value::Int(i) => Some(i),
-            _ => None,
-        }
-    }
-}
-
-pub type SerializedInst = [u8; INST_CHUNCK_SIZE];
-
-impl Instruction {
-    pub fn serialize(&self) -> Result<SerializedInst, Panic> {
-        let mut se = [0; INST_CHUNCK_SIZE];
-        se[0] = self.kind as u8;
-        use InstructionKind::*;
-        match self.kind {
-            Push | DupAt | JumpIf | Jump => {
-                // Tenth byte tells if there is supposed to be an operand
-                se[INST_CHUNCK_SIZE - 1] = 1;
-                for (i, b) in self
-                    .operand
-                    .into_option()
-                    .ok_or(Panic::InvalidOperandValue {
-                        operand: self.operand.to_string(),
-                        inst: self.kind,
-                    })?
-                    .to_le_bytes()
-                    .into_iter()
-                    .enumerate()
-                {
-                    se[i + 1] = b;
-                }
-            }
-            _ => {}
-        }
-
-        Ok(se)
-    }
-
-    fn deserialize(se: SerializedInst) -> Result<Instruction, Panic> {
-        use InstructionKind::*;
-        let kind = match se[0] {
-            0 => Nop,
-            1 => Drop,
-            2 => Dup,
-            3 => Push,
-            4 => DupAt,
-            5 => JumpIf,
-            6 => Jump,
-            7 => Eq,
-            8 => Sub,
-            9 => Mul,
-            10 => Div,
-            11 => Sum,
-            _ => {
-                return Err(Panic::InvalidBinaryInstruction);
-            }
-        };
-
-        let operand = if se[INST_CHUNCK_SIZE - 1] != 0 {
-            Value::Int(isize::from_le_bytes(
-                se[1..INST_CHUNCK_SIZE - 1].try_into().unwrap(),
-            ))
-        } else {
-            Value::Null
-        };
-
-        Ok(Instruction { kind, operand })
-    }
-}
-
 pub struct VM {
-    stack: [Value; VM_STACK_CAPACITY],
-    stack_size: usize,
-    program: [Instruction; PROGRAM_INST_CAPACITY],
-    program_size: usize,
+    stack: Array<Value, VM_STACK_CAPACITY>,
+    program: Array<Instruction, PROGRAM_INST_CAPACITY>,
     inst_ptr: usize,
     inst_limit: Option<usize>,
     debug: (bool, bool),
@@ -143,13 +43,8 @@ pub struct VM {
 impl VM {
     fn init() -> Self {
         Self {
-            stack: [Value::Null; VM_STACK_CAPACITY],
-            stack_size: 0,
-            program: [Instruction {
-                kind: InstructionKind::Nop,
-                operand: Value::Null,
-            }; PROGRAM_INST_CAPACITY],
-            program_size: 0,
+            stack: Array::new(),
+            program: Array::new(),
             inst_ptr: 0,
             inst_limit: None,
             debug: (false, false),
@@ -162,8 +57,8 @@ impl VM {
             return Err(Panic::InstLimitkOverflow(len));
         }
 
-        self.program_size = len;
-        self.program[..len].copy_from_slice(&program[..len]);
+        self.program.size = len;
+        self.program.items[..len].copy_from_slice(&program[..len]);
 
         Ok(())
     }
@@ -174,13 +69,11 @@ impl VM {
             Err(io_err) => return Err(Panic::ReadFileErr(io_err)),
         };
 
-        let mut size = 0;
-        for (i, inst) in buf.chunks(INST_CHUNCK_SIZE).enumerate() {
+        for inst_chunck in buf.chunks(INST_CHUNCK_SIZE) {
             // TODO: maybe handle this unwrap
-            self.program[i] = Instruction::deserialize(inst.try_into().unwrap())?;
-            size += 1;
+            let inst = Instruction::deserialize(inst_chunck.try_into().unwrap())?;
+            self.program.push(inst);
         }
-        self.program_size = size;
 
         Ok(())
     }
@@ -188,7 +81,7 @@ impl VM {
     pub fn serialize_into_file<P: AsRef<Path>>(&self, file: P) -> Result<(), Panic> {
         let mut buf = Vec::<SerializedInst>::new();
 
-        for inst in self.program.iter() {
+        for inst in self.program.items.iter() {
             buf.push(inst.serialize()?);
         }
 
@@ -205,55 +98,7 @@ impl VM {
             Err(io_err) => return Err(Panic::ReadFileErr(io_err)),
         };
 
-        let mut stream = program.split_whitespace();
-
-        let mut idx = 0;
-        while let Some(token) = stream.next() {
-            use InstructionKind::*;
-            let (kind, with_operand) = match token {
-                "неоп" => (Nop, false),
-                "кинь" => (Drop, false),
-                "копію" => (Dup, false),
-                "клади" => (Push, true),
-                "копію_у" => (DupAt, true),
-                "крок_рівн" => (JumpIf, true),
-                "крок" => (Jump, true),
-                "рівн" => (Eq, false),
-                "різн" => (Sub, false),
-                "множ" => (Mul, false),
-                "діли" => (Div, false),
-                "сума" => (Sum, false),
-                inst => return Err(Panic::InvalidInstruction(inst.to_string())),
-            };
-
-            let operand = if with_operand {
-                match stream.next() {
-                    Some(operand) => match operand.parse::<isize>() {
-                        Ok(i) => Value::Int(i),
-                        _ => {
-                            return Err(Panic::InvalidOperandValue {
-                                operand: operand.to_string(),
-                                inst: kind,
-                            });
-                        }
-                    },
-                    _ => {
-                        return Err(Panic::InvalidOperandValue {
-                            operand: Value::Null.to_string(),
-                            inst: kind,
-                        });
-                    }
-                }
-            } else {
-                Value::Null
-            };
-
-            self.program[idx] = Instruction { kind, operand };
-
-            idx += 1;
-        }
-
-        self.program_size = idx;
+        self.program = Instruction::disassemble(program)?;
 
         Ok(())
     }
@@ -263,31 +108,37 @@ impl VM {
         let mut inst_count = 0;
         let limit = match self.inst_limit {
             Some(l) => l,
-            _ => self.program_size,
+            _ => std::usize::MAX,
         };
 
-        while self.inst_ptr < self.program_size && inst_count != limit {
-            self.execute_instruction()?;
+        while self.inst_ptr < self.program.size && inst_count != limit {
             if dbg_inst {
                 println!(
                     "+ ІНСТ {ptr} : {inst}",
                     ptr = self.inst_ptr,
-                    inst = self.program[self.inst_ptr],
+                    inst = self.program.get(self.inst_ptr),
                 );
             }
+
+            self.execute_instruction()?;
+
             if dbg_stack {
                 println!(
                     "СТЕК [{size}] АДР: {ptr} ЗНАЧ: {v}",
-                    size = self.stack_size,
-                    ptr = if self.stack_size < 1 {
+                    size = self.stack.size,
+                    ptr = if self.stack.size < 1 {
                         0
                     } else {
-                        self.stack_size - 1
+                        self.stack.size - 1
                     },
-                    v = self.stack[self.stack_size - 1]
+                    v = if self.stack.size < 1 {
+                        self.stack.get(self.stack.size)
+                    } else {
+                        self.stack.get(self.stack.size - 1)
+                    }
                 );
             }
-            self.inst_ptr += 1;
+
             inst_count += 1;
         }
 
@@ -303,7 +154,7 @@ impl VM {
                 (Value::Int(a), Value::Int(b)) => (a, b),
                 (val_a, val_b) => {
                     return Err(Panic::IlligalInstructionOperands {
-                        inst: state.program[state.inst_ptr].kind,
+                        inst: state.program.items[state.inst_ptr].kind,
                         val_a,
                         val_b,
                     })
@@ -312,14 +163,28 @@ impl VM {
             state.stack_push(Value::Int(f(a, b)?))
         }
 
-        let inst = self.program[self.inst_ptr];
+        let inst = self.program.get(self.inst_ptr);
+
+        if inst.conditional {
+            if let Value::Int(i) = self.stack.get_last() {
+                if i == 0 {
+                    self.inst_ptr += 1;
+                    return Ok(());
+                }
+            } else {
+                return Err(Panic::InvalidOperandValue {
+                    operand: Value::Null.to_string(),
+                    inst: inst.kind,
+                });
+            }
+        }
+
         use InstructionKind::*;
-        match inst.kind {
+        let result = match inst.kind {
             Nop => Ok(()),
             Push => self.stack_push(inst.operand),
             Drop => {
-                self.stack_size -= 1;
-                self.stack[self.stack_size] = Value::Null;
+                let _ = self.stack.pop();
                 Ok(())
             }
             DupAt => {
@@ -337,29 +202,12 @@ impl VM {
                     });
                 }
 
-                self.stack_push(self.stack[addr as usize])
+                self.stack_push(self.stack.get(addr as usize))
             }
             Dup => {
                 let target = self.stack_pop()?;
                 self.stack_push(target)?;
                 self.stack_push(target)
-            }
-            JumpIf => {
-                if self.stack_size < 1 {
-                    return Err(Panic::StackUnderflow);
-                }
-
-                if self.stack[self.stack_size] != Value::Null {
-                    self.inst_ptr =
-                        inst.operand
-                            .into_option()
-                            .ok_or(Panic::InvalidOperandValue {
-                                operand: inst.operand.to_string(),
-                                inst: inst.kind,
-                            })? as usize;
-                }
-
-                Ok(())
             }
             Jump => {
                 let addr = inst
@@ -369,24 +217,23 @@ impl VM {
                         operand: inst.operand.to_string(),
                         inst: inst.kind,
                     })?;
-                if addr < 0 || addr as usize > self.program_size {
+                if addr < 0 || addr as usize > self.program.size {
                     return Err(Panic::InvalidOperandValue {
                         operand: inst.operand.to_string(),
                         inst: inst.kind,
                     });
                 }
-
                 self.inst_ptr = addr as usize;
 
-                Ok(())
+                return Ok(());
             }
             Eq => {
-                if self.stack_size < 2 {
+                if self.stack.size < 2 {
                     return Err(Panic::StackUnderflow);
                 }
 
-                let a = self.stack[self.stack_size - 1];
-                let b = self.stack[self.stack_size - 2];
+                let a = self.stack.items[self.stack.size - 1];
+                let b = self.stack.items[self.stack.size - 2];
 
                 self.stack_push(if a == b { Value::Int(1) } else { Value::Int(0) })
             }
@@ -400,7 +247,10 @@ impl VM {
                     Ok(b / a)
                 }
             }),
-        }
+        };
+
+        self.inst_ptr += 1;
+        result
     }
 
     fn stack_push(&mut self, value: Value) -> Result<(), Panic> {
@@ -409,24 +259,32 @@ impl VM {
         };
         if !(isize::MIN..=isize::MAX).contains(&value) {
             Err(Panic::IntegerOverflow)
-        } else if self.stack_size == VM_STACK_CAPACITY {
+        } else if self.stack.size == VM_STACK_CAPACITY {
             Err(Panic::StackOverflow)
         } else {
-            self.stack[self.stack_size] = Value::Int(value);
-            self.stack_size += 1;
+            self.stack.push(Value::Int(value));
             Ok(())
         }
     }
 
     fn stack_pop(&mut self) -> Result<Value, Panic> {
-        if self.stack_size == 0 {
+        if self.stack.size == 0 {
             Err(Panic::StackUnderflow)
         } else {
-            self.stack_size -= 1;
-            let value = self.stack[self.stack_size];
-            self.stack[self.stack_size] = Value::Null;
+            let value = self.stack.pop();
 
             Ok(value)
+        }
+    }
+
+    fn dump_program(&self) {
+        let limit = match self.inst_limit {
+            Some(l) if l <= self.program.size => l,
+            _ => self.program.size,
+        };
+
+        for i in 0..limit {
+            println!("{}", self.program.items[i]);
         }
     }
 }
@@ -452,11 +310,13 @@ fn main() {
     let mut state = VM::init();
     let mut file: Option<String> = None;
     let mut binary = false;
+    let mut dump_prog = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "-h" => return print_usage(None),
             "-b" => binary = true,
+            "-dp" => dump_prog = true,
             "-ds" => state.debug.0 = true,
             "-di" => state.debug.1 = true,
             "-l" => match args.next() {
@@ -466,10 +326,13 @@ fn main() {
                 },
                 _ => return eprintln!("[!] Значення для ліміту не вказано"),
             },
-            f if Path::new(&f).is_file() => {
-                file = Some(f.to_string());
+            f => {
+                if Path::new(&f).is_file() {
+                    file = Some(f.to_string());
+                } else {
+                    return print_usage(Some(&format!("[!] Вказано неіснуючий файл: {f}")));
+                }
             }
-            a => return print_usage(Some(&format!("[!] Невірний аргумент: {a}"))),
         }
     }
 
@@ -482,7 +345,9 @@ fn main() {
             eprintln!("[!] {e}");
         }
 
-        if let Err(e) = state.execute() {
+        if dump_prog {
+            state.dump_program();
+        } else if let Err(e) = state.execute() {
             eprintln!("[!] Помилка виконання інструкцій: {e}");
         }
     } else {
