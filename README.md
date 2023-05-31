@@ -10,7 +10,7 @@ Goals:  
 - Build an assembly for this VM.  
 - Try to create a programming language using the assembly of my VM.
 
-And all that great stuff will be interfaced using Ukrainian.
+And all that great stuff will be interfaced in Ukrainian.
 
 Progress:
 
@@ -40,8 +40,8 @@ Flow instructions: Jump, JumpIf  
 копію    	# duplicate the top value
 рівн     	# push 1 if two top values are equal, otherwise, push 0
 
-# Everything that have ':' as suffix will be treaded as a label,
-# which will be expanded to the instuction address that is labeled
+# Everything that have ':' as suffix will be treated as a label,
+# which will be expanded to the instruction address that is labeled
 собака: клади 1 # Instruction 0
 собака2:
 	клади 2     # 1
@@ -49,24 +49,22 @@ Flow instructions: Jump, JumpIf  
 
 клади 3         # 2
 
-# After labeling insruction you can use 'крок' (jump) with the label name as an argument
+# After labeling instruction you can use 'крок' (jump) with the label name as an argument
 крок собака3 # Jump to instruction 2
 крок собака2 # Jump to 1
 крок собака # Jump to 0
 
 # Each instruction can have '?' as suffix, which indicates that
-# it will be execute only if top value of the stack not equales to 0
+# it will be execute only if the top value of the stack is greater that zero
 клади 1 	# push 1 on top of the stack
 клади 2 	# push 2
 рівн    	# check for equality: false, so push 0
-сума?   	# this instruction will be skiped: top == 0
-клади 2 	# the value doesn't need to be 1 to represend true statement
+сума?   	# this instruction will be skipped: top == 0
+клади 2 	# the value doesn't need to be 1 to represent a true statement
 сума?   	# this will be executed: 2 != 0
 
 ```
 - [ ] Ua-En dictionary for the instructions
 
 - [ ] TODO
-
-
 

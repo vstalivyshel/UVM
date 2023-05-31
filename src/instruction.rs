@@ -48,14 +48,9 @@ impl Instruction {
     // 		1 - enum's variant of InstructionKind
     // 		2 - gives information about instruction:
     // 			   - with_operand: 1 - supposed to have an operand, 0 - not
-    // 			   - labeled: 10 - labeld , 00 - not
-    // 			   - conditional: 100 - conditional, 000 - not
+    // 			   - conditional: 10 - conditional, 00 - not
     // 		3..=10 - bytes representation of the isize
     //
-    // Contitional instruction - is the instruction that will check top value
-    // of the stack as a boolean befor executing itself:
-    // 		1 - instruction will be executed,
-    // 		0 - instruction will be skiped
 
     pub fn serialize(&self) -> Result<SerializedInst, Panic> {
         let mut se = [0; INST_CHUNCK_SIZE];
