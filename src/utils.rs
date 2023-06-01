@@ -1,6 +1,12 @@
 use crate::{Instruction, InstructionKind, Panic, Value, PROGRAM_INST_CAPACITY};
 use std::{error, fmt};
 
+impl<T: Copy + Default, const N: usize> Default for Array<T, N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[macro_export]
 macro_rules! inst {
     ($kind:tt $operand:expr) => {
@@ -25,21 +31,58 @@ macro_rules! prog {
     };
 }
 
+pub struct Array<T, const N: usize> {
+    pub items: [T; N],
+    pub size: usize,
+}
+
+impl<T: Copy + Default, const N: usize> Array<T, N> {
+    pub fn new() -> Self {
+        Self {
+            items: [T::default(); N],
+            size: 0,
+        }
+    }
+
+    pub fn get_last(&self) -> T {
+        self.items[if self.size < 1 { 0 } else { self.size - 1 }]
+    }
+
+    pub fn push(&mut self, item: T) {
+        self.items[self.size] = item;
+        self.size += 1;
+    }
+
+    pub fn get(&self, idx: usize) -> T {
+        self.items[idx]
+    }
+
+    pub fn pop(&mut self) -> T {
+        self.size -= 1;
+        self.items[self.size]
+    }
+
+    pub fn replace(&mut self, idx: usize, item: T) {
+        self.items[idx] = item;
+    }
+}
+
 impl fmt::Display for Instruction {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        use InstructionKind::*;
-        match self.kind {
-            Push | DupAt | Jump => {
-                write!(
-                    f,
-                    "{cond_mark}{kind}({oper})",
-                    kind = self.kind,
-                    cond_mark = if self.conditional { "? " } else { "" },
-                    oper = self.operand.into_option().unwrap()
-                )
+        write!(
+            f,
+            "{cond_mark}{kind}({oper})",
+            kind = self.kind,
+            cond_mark = if self.conditional {
+                "Умовно "
+            } else {
+                ""
+            },
+            oper = match self.operand {
+                Value::Int(v) => format!("{v}"),
+                _ => String::new(),
             }
-            _ => write!(f, "{}", self.kind),
-        }
+        )
     }
 }
 

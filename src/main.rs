@@ -1,11 +1,8 @@
-mod array;
 mod instruction;
 mod utils;
-
-use array::Array;
-
 use crate::instruction::{Instruction, InstructionKind, SerializedInst, Value, INST_CHUNCK_SIZE};
 use std::{fs, io, isize, path::Path};
+use utils::Array;
 
 const VM_STACK_CAPACITY: usize = 1024;
 const PROGRAM_INST_CAPACITY: usize = 1024;
@@ -108,7 +105,7 @@ impl VM {
         let mut inst_count = 0;
         let limit = match self.inst_limit {
             Some(l) => l,
-            _ => std::usize::MAX,
+            _ => PROGRAM_INST_CAPACITY,
         };
 
         while self.inst_ptr < self.program.size && inst_count != limit {
@@ -121,16 +118,12 @@ impl VM {
             }
 
             self.execute_instruction()?;
+            inst_count += 1;
 
             if dbg_stack {
                 println!(
-                    "СТЕК [{size}] АДР: {ptr} ЗНАЧ: {v}",
+                    "СТЕК [{size}] : {v}",
                     size = self.stack.size,
-                    ptr = if self.stack.size < 1 {
-                        0
-                    } else {
-                        self.stack.size - 1
-                    },
                     v = if self.stack.size < 1 {
                         self.stack.get(self.stack.size)
                     } else {
@@ -138,8 +131,6 @@ impl VM {
                     }
                 );
             }
-
-            inst_count += 1;
         }
 
         Ok(())
@@ -166,16 +157,12 @@ impl VM {
         let inst = self.program.get(self.inst_ptr);
 
         if inst.conditional {
-            if let Value::Int(i) = self.stack.get_last() {
-                if i == 0 {
+            match self.stack_pop()? {
+                Value::Int(i) if i > 0 => {}
+                _ => {
                     self.inst_ptr += 1;
                     return Ok(());
                 }
-            } else {
-                return Err(Panic::InvalidOperandValue {
-                    operand: Value::Null.to_string(),
-                    inst: inst.kind,
-                });
             }
         }
 

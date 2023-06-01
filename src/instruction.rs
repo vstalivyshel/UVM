@@ -1,4 +1,4 @@
-use crate::{array::Array, Panic, PROGRAM_INST_CAPACITY};
+use crate::{Array, Panic, PROGRAM_INST_CAPACITY};
 
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, PartialEq, Default)]
@@ -123,12 +123,16 @@ impl Instruction {
     pub fn disassemble(
         token_strem: String,
     ) -> Result<Array<Instruction, PROGRAM_INST_CAPACITY>, Panic> {
-        let mut stream = token_strem.split_whitespace();
+        let mut stream = token_strem
+            .lines()
+            .filter(|line| !line.trim_start().starts_with('#'))
+            .flat_map(|line| line.split_whitespace());
         let mut program = Array::<Instruction, PROGRAM_INST_CAPACITY>::new();
         let mut lables_table = Array::<(usize, &str), PROGRAM_INST_CAPACITY>::new();
         let mut inst_addr = 0;
 
         while let Some(token) = stream.next() {
+            let token = token.trim();
             if token.ends_with(':') {
                 lables_table.push((inst_addr, token.strip_suffix(':').unwrap()));
                 continue;
@@ -181,13 +185,11 @@ impl Instruction {
                 Value::Null
             };
 
-            let inst = Instruction {
+            program.push(Instruction {
                 kind,
                 operand,
                 conditional,
-            };
-
-            program.push(inst);
+            });
             inst_addr += 1;
         }
 
