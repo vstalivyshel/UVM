@@ -1,12 +1,6 @@
 use crate::{Instruction, InstructionKind, Panic, Value, PROGRAM_INST_CAPACITY};
 use std::{error, fmt};
 
-impl<T: Copy + Default, const N: usize> Default for Array<T, N> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[macro_export]
 macro_rules! inst {
     ($kind:tt $operand:expr) => {
@@ -31,6 +25,27 @@ macro_rules! prog {
     };
 }
 
+pub fn print_usage() {
+    eprintln!(
+        "./uvm [ОПЦ] <ФАЙЛ>
+<ФАЙЛ> - файл з байткодом інструкцій УВМ
+[ОПЦ]:
+    -usm - перевести <ФАЙЛ> формату USM (assembly) на байткод
+    -dusm - перевести <ФАЙЛ> з байткодом на USM (assembly)
+    -dump - показати інструкціЇ у вказаному файлі без виконяння
+    -l <ЧИС> - встановити ліміт на кількість виконуваних інструкцій
+    -ds - показати всі зміни стеку на протязі виконня програми
+    -di - показати лист виконаних інструкцій
+    -h - показати це повідомлення"
+    )
+}
+
+impl<T: Copy + Default, const N: usize> Default for Array<T, N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct Array<T, const N: usize> {
     pub items: [T; N],
     pub size: usize,
@@ -44,7 +59,7 @@ impl<T: Copy + Default, const N: usize> Array<T, N> {
         }
     }
 
-    pub fn get_last(&self) -> T {
+    pub fn _get_last(&self) -> T {
         self.items[if self.size < 1 { 0 } else { self.size - 1 }]
     }
 
@@ -62,7 +77,7 @@ impl<T: Copy + Default, const N: usize> Array<T, N> {
         self.items[self.size]
     }
 
-    pub fn replace(&mut self, idx: usize, item: T) {
+    pub fn _replace(&mut self, idx: usize, item: T) {
         self.items[idx] = item;
     }
 }

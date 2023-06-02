@@ -1,5 +1,24 @@
 use crate::{Array, Panic, PROGRAM_INST_CAPACITY};
 
+pub const INST_CHUNCK_SIZE: usize = 10;
+pub type SerializedInst = [u8; INST_CHUNCK_SIZE];
+
+#[derive(Copy, Clone, Debug, PartialEq, Default)]
+pub enum Value {
+    Int(isize),
+    #[default]
+    Null,
+}
+
+impl Value {
+    pub fn into_option(self) -> Option<isize> {
+        match self {
+            Value::Int(i) => Some(i),
+            _ => None,
+        }
+    }
+}
+
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, PartialEq, Default)]
 pub enum InstructionKind {
@@ -17,30 +36,66 @@ pub enum InstructionKind {
     Div = 10,
 }
 
-pub const INST_CHUNCK_SIZE: usize = 10;
-pub type SerializedInst = [u8; INST_CHUNCK_SIZE];
+impl InstructionKind {
+    fn try_from<T: AsRef<str>>(src: T) -> Result<Self, Panic> {
+        use InstructionKind::*;
+        Ok(match src.as_ref() {
+            "неоп" => Nop,
+            "кинь" => Drop,
+            "копію" => Dup,
+            "клади" => Push,
+            "копію_у" => DupAt,
+            "крок" => Jump,
+            "рівн" => Eq,
+            "різн" => Sub,
+            "множ" => Mul,
+            "діли" => Div,
+            "сума" => Sum,
+            inst => return Err(Panic::InvalidInstruction(inst.to_string())),
+        })
+    }
+
+    fn as_string(&self) -> String {
+        use InstructionKind::*;
+        match self {
+            Nop => "неоп",
+            Drop => "кинь",
+            Dup => "копію",
+            Push => "клади",
+            DupAt => "копію_у",
+            Jump => "крок",
+            Eq => "рівн",
+            Sub => "різн",
+            Mul => "множ",
+            Div => "діли",
+            Sum => "сума",
+        }
+        .into()
+    }
+
+    fn has_operand(&self) -> bool {
+        use InstructionKind::*;
+        match self {
+            Nop => false,
+            Push => true,
+            Dup => false,
+            Drop => false,
+            Eq => false,
+            Jump => true,
+            Sum => false,
+            DupAt => true,
+            Sub => false,
+            Mul => false,
+            Div => false,
+        }
+    }
+}
 
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Instruction {
     pub kind: InstructionKind,
     pub operand: Value,
     pub conditional: bool,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Default)]
-pub enum Value {
-    Int(isize),
-    #[default]
-    Null,
-}
-
-impl Value {
-    pub fn into_option(self) -> Option<isize> {
-        match self {
-            Value::Int(i) => Some(i),
-            _ => None,
-        }
-    }
 }
 
 impl Instruction {
@@ -86,12 +141,11 @@ impl Instruction {
             8 => Sub,
             9 => Mul,
             10 => Div,
-            _ => {
-                return Err(Panic::InvalidBinaryInstruction);
-            }
+            // I don't like this one
+            _ => return Err(Panic::InvalidBinaryInstruction),
         };
-        let mut inst_opts = se[1];
 
+        let mut inst_opts = se[1];
         let conditional = if inst_opts >= 10 {
             inst_opts %= 10;
             true
@@ -101,7 +155,6 @@ impl Instruction {
 
         let with_operand = inst_opts != 0;
         let operand_chunck = &se[1..INST_CHUNCK_SIZE];
-
         let operand = if with_operand && operand_chunck.contains(&b'N') {
             return Err(Panic::InvalidOperandValue {
                 operand: Value::Null.to_string(),
@@ -119,88 +172,68 @@ impl Instruction {
             conditional,
         })
     }
+}
 
-    pub fn disassemble(
-        token_strem: String,
-    ) -> Result<Array<Instruction, PROGRAM_INST_CAPACITY>, Panic> {
-        let mut stream = token_strem
-            .lines()
-            .filter(|line| !line.trim_start().starts_with('#'))
-            .flat_map(|line| line.split_whitespace());
-        let mut program = Array::<Instruction, PROGRAM_INST_CAPACITY>::new();
-        let mut lables_table = Array::<(usize, &str), PROGRAM_INST_CAPACITY>::new();
-        let mut inst_addr = 0;
+pub fn assemble(source: Array<Instruction, PROGRAM_INST_CAPACITY>) -> Result<String, Panic> {
+    Ok(String::new())
+}
 
-        while let Some(token) = stream.next() {
-            let token = token.trim();
-            if token.ends_with(':') {
-                lables_table.push((inst_addr, token.strip_suffix(':').unwrap()));
-                continue;
-            }
-            let conditional = token.ends_with('?');
-            let token = token.strip_suffix('?').unwrap_or(token);
-            use InstructionKind::*;
-            let (kind, with_operand) = match token {
-                "неоп" => (Nop, false),
-                "кинь" => (Drop, false),
-                "копію" => (Dup, false),
-                "клади" => (Push, true),
-                "копію_у" => (DupAt, true),
-                "крок" => (Jump, true),
-                "рівн" => (Eq, false),
-                "різн" => (Sub, false),
-                "множ" => (Mul, false),
-                "діли" => (Div, false),
-                "сума" => (Sum, false),
-                inst => return Err(Panic::InvalidInstruction(inst.to_string())),
-            };
+pub fn disassemble(source: String) -> Result<Array<Instruction, PROGRAM_INST_CAPACITY>, Panic> {
+    let mut token_strem = source
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .flat_map(|line| line.split_whitespace());
+    let mut program = Array::<Instruction, PROGRAM_INST_CAPACITY>::new();
+    let mut lables_table = Array::<(usize, &str), PROGRAM_INST_CAPACITY>::new();
+    let mut inst_addr = 0;
 
-            let operand = if with_operand {
-                match stream.next() {
-                    Some(op) => {
-                        if let Ok(i) = op.parse::<isize>() {
-                            Value::Int(i)
-                        } else if let Some((addr, _)) = lables_table
-                            .items
-                            .iter()
-                            .find(|(_, label)| label.contains(op))
-                        {
-                            Value::Int(*addr as isize)
-                        } else {
-                            return Err(Panic::InvalidOperandValue {
-                                operand: op.to_string(),
-                                inst: kind,
-                            });
-                        }
-                    }
-
-                    _ => {
+    while let Some(token) = token_strem.next() {
+        let token = token.trim();
+        if token.ends_with(':') {
+            lables_table.push((inst_addr, token.strip_suffix(':').unwrap()));
+            continue;
+        }
+        let conditional = token.ends_with('?');
+        let token = token.strip_suffix('?').unwrap_or(token);
+        let kind = InstructionKind::try_from(token)?;
+        let with_operand = kind.has_operand();
+        let operand = if with_operand {
+            match token_strem.next() {
+                Some(op) => {
+                    if let Ok(i) = op.parse::<isize>() {
+                        Value::Int(i)
+                    } else if let Some((addr, _)) = lables_table
+                        .items
+                        .iter()
+                        .find(|(_, label)| label.contains(op))
+                    {
+                        Value::Int(*addr as isize)
+                    } else {
                         return Err(Panic::InvalidOperandValue {
-                            operand: Value::Null.to_string(),
+                            operand: op.to_string(),
                             inst: kind,
-                        })
+                        });
                     }
                 }
-            } else {
-                Value::Null
-            };
 
-            program.push(Instruction {
-                kind,
-                operand,
-                conditional,
-            });
-            inst_addr += 1;
-        }
+                _ => {
+                    return Err(Panic::InvalidOperandValue {
+                        operand: Value::Null.to_string(),
+                        inst: kind,
+                    })
+                }
+            }
+        } else {
+            Value::Null
+        };
 
-        Ok(program)
+        program.push(Instruction {
+            kind,
+            operand,
+            conditional,
+        });
+        inst_addr += 1;
     }
 
-    pub fn nop() -> Self {
-        Self {
-            kind: InstructionKind::Nop,
-            operand: Value::Null,
-            conditional: false,
-        }
-    }
+    Ok(program)
 }

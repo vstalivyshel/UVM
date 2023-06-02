@@ -1,7 +1,12 @@
 mod instruction;
 mod utils;
 use crate::instruction::{Instruction, InstructionKind, SerializedInst, Value, INST_CHUNCK_SIZE};
-use std::{fs, io, isize, path::Path};
+use std::{
+    fs,
+    io::{self, Write},
+    isize,
+    path::Path,
+};
 use utils::Array;
 
 const VM_STACK_CAPACITY: usize = 1024;
@@ -29,45 +34,22 @@ pub enum Panic {
     DivByZero,
 }
 
+type VMResult<T> = Result<T, Panic>;
+
 pub struct VM {
     stack: Array<Value, VM_STACK_CAPACITY>,
     program: Array<Instruction, PROGRAM_INST_CAPACITY>,
     inst_ptr: usize,
-    inst_limit: Option<usize>,
-    debug: (bool, bool),
 }
 
 impl VM {
-    fn init() -> Self {
-        Self {
-            stack: Array::new(),
-            program: Array::new(),
-            inst_ptr: 0,
-            inst_limit: None,
-            debug: (false, false),
-        }
-    }
-
-    pub fn load_from_memmory(&mut self, program: &[Instruction]) -> Result<(), Panic> {
-        let len = program.len();
-        if len > PROGRAM_INST_CAPACITY {
-            return Err(Panic::InstLimitkOverflow(len));
-        }
-
-        self.program.size = len;
-        self.program.items[..len].copy_from_slice(&program[..len]);
-
-        Ok(())
-    }
-
-    fn deserialize_from_file<P: AsRef<Path>>(&mut self, path: P) -> Result<(), Panic> {
+    fn load_from_file<P: AsRef<Path>>(&mut self, path: P) -> Result<(), Panic> {
         let buf = match fs::read(path.as_ref()) {
             Ok(i) => i,
             Err(io_err) => return Err(Panic::ReadFileErr(io_err)),
         };
 
         for inst_chunck in buf.chunks(INST_CHUNCK_SIZE) {
-            // TODO: maybe handle this unwrap
             let inst = Instruction::deserialize(inst_chunck.try_into().unwrap())?;
             self.program.push(inst);
         }
@@ -75,18 +57,20 @@ impl VM {
         Ok(())
     }
 
-    pub fn serialize_into_file<P: AsRef<Path>>(&self, file: P) -> Result<(), Panic> {
-        let mut buf = Vec::<SerializedInst>::new();
+    pub fn save_into_file(&self, file: Option<String>) -> Result<(), Panic> {
+        let mut buf = Array::<SerializedInst, PROGRAM_INST_CAPACITY>::new();
 
         for inst in self.program.items.iter() {
             buf.push(inst.serialize()?);
         }
 
-        if let Err(io_err) = fs::write(file.as_ref(), buf.concat()) {
-            return Err(Panic::WriteToFileErr(io_err));
-        }
+        let ser_prog = buf.items.concat();
 
-        Ok(())
+        match file {
+            Some(f) => fs::write(f, ser_prog.as_slice()),
+            _ => io::stdout().lock().write_all(ser_prog.as_slice()),
+        }
+        .map_err(Panic::WriteToFileErr)
     }
 
     pub fn disassemble_from_file<P: AsRef<Path>>(&mut self, path: P) -> Result<(), Panic> {
@@ -95,43 +79,7 @@ impl VM {
             Err(io_err) => return Err(Panic::ReadFileErr(io_err)),
         };
 
-        self.program = Instruction::disassemble(program)?;
-
-        Ok(())
-    }
-
-    fn execute(&mut self) -> Result<(), Panic> {
-        let (dbg_stack, dbg_inst) = self.debug;
-        let mut inst_count = 0;
-        let limit = match self.inst_limit {
-            Some(l) => l,
-            _ => PROGRAM_INST_CAPACITY,
-        };
-
-        while self.inst_ptr < self.program.size && inst_count != limit {
-            if dbg_inst {
-                println!(
-                    "+ ІНСТ {ptr} : {inst}",
-                    ptr = self.inst_ptr,
-                    inst = self.program.get(self.inst_ptr),
-                );
-            }
-
-            self.execute_instruction()?;
-            inst_count += 1;
-
-            if dbg_stack {
-                println!(
-                    "СТЕК [{size}] : {v}",
-                    size = self.stack.size,
-                    v = if self.stack.size < 1 {
-                        self.stack.get(self.stack.size)
-                    } else {
-                        self.stack.get(self.stack.size - 1)
-                    }
-                );
-            }
-        }
+        self.program = instruction::disassemble(program)?;
 
         Ok(())
     }
@@ -264,81 +212,196 @@ impl VM {
         }
     }
 
-    fn dump_program(&self) {
-        let limit = match self.inst_limit {
-            Some(l) if l <= self.program.size => l,
-            _ => self.program.size,
+    fn start(config: Configuration) -> VMResult<()> {
+        let mut state = Self {
+            stack: Array::new(),
+            program: Array::new(),
+            inst_ptr: 0,
         };
 
-        for i in 0..limit {
-            println!("{}", self.program.items[i]);
+        use Configuration::*;
+        match config {
+            Dump {
+                target_file,
+                inst_limit,
+            } => {
+                state.load_from_file(target_file)?;
+                let limit = match inst_limit {
+                    Some(l) if l <= state.program.size => l,
+                    _ => state.program.size,
+                };
+
+                for i in 0..limit {
+                    println!("{}", state.program.items[i]);
+                }
+            }
+            Disassemble {
+                target_file,
+                output_file,
+            } => {
+                state.disassemble_from_file(target_file)?;
+                state.save_into_file(output_file)?;
+            }
+            Assemble {
+                target_file,
+                output_file,
+            } => {}
+            Run {
+                target_file,
+                inst_limit,
+                debug_inst,
+                debug_stack,
+            } => {
+                state.load_from_file(target_file)?;
+                let mut inst_count = 0;
+                let limit = match inst_limit {
+                    Some(l) => l,
+                    _ => PROGRAM_INST_CAPACITY,
+                };
+
+                while state.inst_ptr < state.program.size && inst_count != limit {
+                    if debug_inst {
+                        println!(
+                            "+ ІНСТ {ptr} : {inst}",
+                            ptr = state.inst_ptr,
+                            inst = state.program.get(state.inst_ptr),
+                        );
+                    }
+
+                    state.execute_instruction()?;
+                    inst_count += 1;
+
+                    if debug_stack {
+                        println!(
+                            "СТЕК [{size}] : {v}",
+                            size = state.stack.size,
+                            v = if state.stack.size < 1 {
+                                state.stack.get(state.stack.size)
+                            } else {
+                                state.stack.get(state.stack.size - 1)
+                            }
+                        );
+                    }
+                }
+            }
         }
+
+        Ok(())
     }
 }
 
-fn print_usage(msg: Option<&str>) {
-    eprintln!(
-        "./uvm [ОПЦ] <ФАЙЛ>
-<ФАЙЛ> - файл з байткодом інструкцій УВМ
-[ОПЦ]:
-    -b - вказаний файл є байткодом
-    -l <ЧИС> - встановити ліміт на кількість виконуваних інструкцій
-    -ds - показати всі зміни стеку на протязі виконня програми
-    -di - показати лист виконаних інструкцій
-    -h - показати це повідомлення
-
-{msg}",
-        msg = msg.unwrap_or(""),
-    )
+enum Configuration {
+    Dump {
+        target_file: String,
+        inst_limit: Option<usize>,
+    },
+    Run {
+        target_file: String,
+        inst_limit: Option<usize>,
+        debug_inst: bool,
+        debug_stack: bool,
+    },
+    Assemble {
+        target_file: String,
+        output_file: Option<String>,
+    },
+    Disassemble {
+        target_file: String,
+        output_file: Option<String>,
+    },
 }
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let mut state = VM::init();
-    let mut file: Option<String> = None;
-    let mut binary = false;
-    let mut dump_prog = false;
+    let sub = match args.next() {
+        Some(s) => s,
+        _ => return,
+    };
 
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "-h" => return print_usage(None),
-            "-b" => binary = true,
-            "-dp" => dump_prog = true,
-            "-ds" => state.debug.0 = true,
-            "-di" => state.debug.1 = true,
-            "-l" => match args.next() {
-                Some(limit) => match limit.parse::<usize>() {
-                    Ok(l) => state.inst_limit = Some(l),
-                    _ => return eprintln!("[!] Встановлений неправельний ліміт"),
-                },
-                _ => return eprintln!("[!] Значення для ліміту не вказано"),
-            },
-            f => {
-                if Path::new(&f).is_file() {
-                    file = Some(f.to_string());
-                } else {
-                    return print_usage(Some(&format!("[!] Вказано неіснуючий файл: {f}")));
+    if args.any(|a| a.contains("-h")) {
+        return utils::print_usage();
+    }
+
+    let config = match sub.as_str() {
+        "dump" => {
+            let mut target_file = String::new();
+            let mut inst_limit: Option<usize> = None;
+            while let Some(arg) = args.next() {
+                match arg.as_str() {
+                    "-l" => match args.next() {
+                        Some(limit) => match limit.parse::<usize>() {
+                            Ok(l) => inst_limit = Some(l),
+                            _ => return eprintln!("[!] Встановлений неправельний ліміт"),
+                        },
+
+                        _ => return eprintln!("[!] Значення для ліміту не вказано"),
+                    },
+                    f if Path::new(&f).is_file() => target_file = f.into(),
+                    arg => return eprintln!("[!] Невідома опція для підкоманди \"{sub}\": {arg}"),
+                }
+            }
+
+            Configuration::Dump {
+                target_file,
+                inst_limit,
+            }
+        }
+        opt @ "usm" | opt @ "dusm" => {
+            let mut target_file = String::new();
+            let mut output_file: Option<String> = None;
+            while let Some(arg) = args.next() {
+                match arg.as_str() {
+                    "-o" => output_file = args.next(),
+                    f if Path::new(&f).is_file() => target_file = f.into(),
+                    arg => return eprintln!("[!] Невідома опція для підкоманди \"{sub}\": {arg}"),
+                }
+            }
+
+            if opt == "usm" {
+                Configuration::Assemble {
+                    target_file,
+                    output_file,
+                }
+            } else {
+                Configuration::Disassemble {
+                    target_file,
+                    output_file,
                 }
             }
         }
-    }
 
-    if let Some(f) = file {
-        if binary {
-            if let Err(e) = state.deserialize_from_file(&f) {
-                eprintln!("[!] {e}");
+        _ => {
+            let mut target_file = String::new();
+            let mut inst_limit: Option<usize> = None;
+            let mut debug_inst = false;
+            let mut debug_stack = false;
+
+            while let Some(a) = args.next() {
+                match a.as_str() {
+                    "-ds" => debug_stack = true,
+                    "-di" => debug_inst = true,
+                    "-l" => match args.next() {
+                        Some(limit) => match limit.parse::<usize>() {
+                            Ok(l) => inst_limit = Some(l),
+                            _ => return eprintln!("[!] Встановлений неправельний ліміт"),
+                        },
+                        _ => return eprintln!("[!] Значення для ліміту не вказано"),
+                    },
+                    f if Path::new(&f).is_file() => target_file = f.into(),
+                    arg => return eprintln!("[!] Невідома опція для підкоманди \"{sub}\": {arg}"),
+                }
             }
-        } else if let Err(e) = state.disassemble_from_file(&f) {
-            eprintln!("[!] {e}");
-        }
 
-        if dump_prog {
-            state.dump_program();
-        } else if let Err(e) = state.execute() {
-            eprintln!("[!] Помилка виконання інструкцій: {e}");
+            Configuration::Run {
+                target_file,
+                inst_limit,
+                debug_inst,
+                debug_stack,
+            }
         }
-    } else {
-        eprintln!();
-        print_usage(Some("[!] Файл не вказано"));
+    };
+
+    if let Err(e) = VM::start(config) {
+        eprintln!("[!] {e}");
     }
 }
