@@ -1,10 +1,10 @@
 mod instruction;
 mod utils;
 use crate::instruction::{Instruction, InstructionKind, SerializedInst, Value, INST_CHUNCK_SIZE};
+use crate::utils::DisplayValue;
 use std::{
     fs,
     io::{self, Write},
-    isize,
     path::Path,
 };
 use utils::Array;
@@ -12,20 +12,16 @@ use utils::Array;
 const VM_STACK_CAPACITY: usize = 1024;
 const PROGRAM_INST_CAPACITY: usize = 1024;
 
+type VMResult<T> = Result<T, Panic>;
+
 #[derive(Debug)]
 pub enum Panic {
     StackOverflow,
     StackUnderflow,
-    IntegerOverflow,
-    InvalidOperandValue {
-        operand: String,
-        inst: InstructionKind,
-    },
-    IlligalInstructionOperands {
-        inst: InstructionKind,
-        val_a: Value,
-        val_b: Value,
-    },
+    ValueOverflow,
+    ValueUnderflow,
+    InvalidOperandValue,
+    IlligalInstructionOperands,
     InvalidInstruction(String),
     InvalidBinaryInstruction,
     InstLimitkOverflow(usize),
@@ -33,8 +29,6 @@ pub enum Panic {
     WriteToFileErr(io::Error),
     DivByZero,
 }
-
-type VMResult<T> = Result<T, Panic>;
 
 pub struct VM {
     stack: Array<Value, VM_STACK_CAPACITY>,
@@ -74,44 +68,33 @@ impl VM {
     }
 
     pub fn disassemble_from_file<P: AsRef<Path>>(&mut self, path: P) -> Result<(), Panic> {
-        let program = match fs::read_to_string(path.as_ref()) {
-            Ok(p) => p,
-            Err(io_err) => return Err(Panic::ReadFileErr(io_err)),
-        };
-
-        self.program = instruction::disassemble(program)?;
+        self.program = instruction::disassemble(
+            fs::read_to_string(path.as_ref()).map_err(Panic::ReadFileErr)?,
+        )?;
 
         Ok(())
     }
 
     fn execute_instruction(&mut self) -> Result<(), Panic> {
-        fn push_from<F>(state: &mut VM, f: F) -> Result<(), Panic>
-        where
-            F: Fn(isize, isize) -> Result<isize, Panic>,
-        {
-            let (a, b) = match (state.stack_pop()?, state.stack_pop()?) {
-                (Value::Int(a), Value::Int(b)) => (a, b),
-                (val_a, val_b) => {
-                    return Err(Panic::IlligalInstructionOperands {
-                        inst: state.program.items[state.inst_ptr].kind,
-                        val_a,
-                        val_b,
-                    })
-                }
-            };
-            state.stack_push(Value::Int(f(a, b)?))
-        }
-
         let inst = self.program.get(self.inst_ptr);
 
-        if inst.conditional {
-            match self.stack_pop()? {
-                Value::Int(i) if i > 0 => {}
-                _ => {
-                    self.inst_ptr += 1;
-                    return Ok(());
+        if inst.conditional && self.stack_pop()?.into_uint().is_some_and(|v| v == 0) {
+            self.inst_ptr += 1;
+            return Ok(());
+        }
+
+        macro_rules! math {
+            ($op:tt) => {{
+                let a = self.stack_pop()?;
+                let b = self.stack_pop()?.into_type_of(a);
+                use Value::*;
+                match (a, b) {
+                    (Int(a), Int(b)) => self.stack_push(Int(a $op b)),
+                    (Uint(a), Uint(b)) => self.stack_push(Uint(a $op b)),
+                    (Float(a), Float(b)) => self.stack_push(Float(a $op b)),
+                    _ => Ok(()),
                 }
-            }
+            }};
         }
 
         use InstructionKind::*;
@@ -122,43 +105,17 @@ impl VM {
                 let _ = self.stack.pop();
                 Ok(())
             }
-            DupAt => {
-                let addr = inst
-                    .operand
-                    .into_option()
-                    .ok_or(Panic::InvalidOperandValue {
-                        operand: inst.operand.to_string(),
-                        inst: inst.kind,
-                    })?;
-                if addr < 0 || addr as usize > self.inst_ptr {
-                    return Err(Panic::InvalidOperandValue {
-                        operand: inst.operand.to_string(),
-                        inst: inst.kind,
-                    });
-                }
-
-                self.stack_push(self.stack.get(addr as usize))
-            }
             Dup => {
                 let target = self.stack_pop()?;
                 self.stack_push(target)?;
                 self.stack_push(target)
             }
             Jump => {
-                let addr = inst
-                    .operand
-                    .into_option()
-                    .ok_or(Panic::InvalidOperandValue {
-                        operand: inst.operand.to_string(),
-                        inst: inst.kind,
-                    })?;
-                if addr < 0 || addr as usize > self.program.size {
-                    return Err(Panic::InvalidOperandValue {
-                        operand: inst.operand.to_string(),
-                        inst: inst.kind,
-                    });
+                let addr = inst.operand.into_uint().ok_or(Panic::InvalidOperandValue)?;
+                if addr > self.program.size {
+                    return Err(Panic::InvalidOperandValue);
                 }
-                self.inst_ptr = addr as usize;
+                self.inst_ptr = addr;
 
                 return Ok(());
             }
@@ -166,22 +123,14 @@ impl VM {
                 if self.stack.size < 2 {
                     return Err(Panic::StackUnderflow);
                 }
-
                 let a = self.stack.items[self.stack.size - 1];
                 let b = self.stack.items[self.stack.size - 2];
-
-                self.stack_push(if a == b { Value::Int(1) } else { Value::Int(0) })
+                self.stack_push(Value::Uint(a.is_eq_to(b) as usize))
             }
-            Sum => push_from(self, |a, b| Ok(b + a)),
-            Sub => push_from(self, |a, b| Ok(b - a)),
-            Mul => push_from(self, |a, b| Ok(b * a)),
-            Div => push_from(self, |a, b| {
-                if a == 0 {
-                    Err(Panic::DivByZero)
-                } else {
-                    Ok(b / a)
-                }
-            }),
+            Sum => math!(+),
+            Sub => math!(-),
+            Mul => math!(*),
+            Div => math!(+),
         };
 
         self.inst_ptr += 1;
@@ -189,15 +138,12 @@ impl VM {
     }
 
     fn stack_push(&mut self, value: Value) -> Result<(), Panic> {
-        let Value::Int(value) = value else {
-            return Err(Panic::InvalidOperandValue { operand: value.to_string(), inst: InstructionKind::Push });
-        };
-        if !(isize::MIN..=isize::MAX).contains(&value) {
-            Err(Panic::IntegerOverflow)
+        if let Value::Null = value {
+            Err(Panic::InvalidOperandValue)
         } else if self.stack.size == VM_STACK_CAPACITY {
             Err(Panic::StackOverflow)
         } else {
-            self.stack.push(Value::Int(value));
+            self.stack.push(value);
             Ok(())
         }
     }
@@ -207,6 +153,10 @@ impl VM {
             Err(Panic::StackUnderflow)
         } else {
             let value = self.stack.pop();
+
+            if value.is_null() {
+                return Err(Panic::StackUnderflow);
+            }
 
             Ok(value)
         }
@@ -245,7 +195,16 @@ impl VM {
             Assemble {
                 target_file,
                 output_file,
-            } => {}
+            } => {
+                state.load_from_file(target_file)?;
+                let res = instruction::assemble(&state.program);
+                if let Some(f) = output_file {
+                    fs::write(f, res)
+                } else {
+                    io::stdout().write_all(res.as_bytes())
+                }
+                .map_err(Panic::WriteToFileErr)?;
+            }
             Run {
                 target_file,
                 inst_limit,
@@ -276,9 +235,9 @@ impl VM {
                             "СТЕК [{size}] : {v}",
                             size = state.stack.size,
                             v = if state.stack.size < 1 {
-                                state.stack.get(state.stack.size)
+                                DisplayValue(state.stack.get(state.stack.size))
                             } else {
-                                state.stack.get(state.stack.size - 1)
+                                DisplayValue(state.stack.get(state.stack.size - 1))
                             }
                         );
                     }

@@ -82,32 +82,29 @@ impl<T: Copy + Default, const N: usize> Array<T, N> {
     }
 }
 
+#[derive(Debug)]
+pub struct DisplayValue(pub Value);
+
+impl fmt::Display for DisplayValue {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self.0 {
+            Value::Float(v) => write!(f, "{v}"),
+            Value::Uint(v) => write!(f, "{v}"),
+            Value::Int(v) => write!(f, "{v}"),
+            Value::Null => write!(f, ""),
+        }
+    }
+}
+
 impl fmt::Display for Instruction {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "{cond_mark}{kind}({oper})",
+            "{kind}{cond} {oper}",
             kind = self.kind,
-            cond_mark = if self.conditional {
-                "Умовно "
-            } else {
-                ""
-            },
-            oper = match self.operand {
-                Value::Int(v) => format!("{v}"),
-                _ => String::new(),
-            }
+            cond = if self.conditional { "?" } else { "" },
+            oper = DisplayValue(self.operand),
         )
-    }
-}
-
-impl fmt::Display for Value {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        use Value::*;
-        match self {
-            Int(i) => write!(f, "Число({i})"),
-            Null => write!(f, "<Відсутнє Значення>"),
-        }
     }
 }
 
@@ -115,17 +112,16 @@ impl fmt::Display for InstructionKind {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use InstructionKind::*;
         match self {
-            Nop => write!(f, "_"),
-            Push => write!(f, "Стек_Доповнення"),
-            Drop => write!(f, "Звільнення_Верхнього_Значення"),
-            Dup => write!(f, "Копія_Верхнього_Значення"),
-            DupAt => write!(f, "Копія_За_Адр"),
-            Jump => write!(f, "Крок_До_Адр"),
-            Eq => write!(f, "Рівність"),
-            Sum => write!(f, "Сума"),
-            Sub => write!(f, "Віднімання"),
-            Mul => write!(f, "Множення"),
-            Div => write!(f, "Ділення"),
+            Nop => write!(f, "неоп"),
+            Drop => write!(f, "кинь"),
+            Dup => write!(f, "копію"),
+            Push => write!(f, "клади"),
+            Jump => write!(f, "крок"),
+            Eq => write!(f, "рівн"),
+            Sub => write!(f, "різн"),
+            Mul => write!(f, "множ"),
+            Div => write!(f, "діли"),
+            Sum => write!(f, "сума"),
         }
     }
 }
@@ -136,17 +132,12 @@ impl fmt::Display for Panic {
         match self {
             StackOverflow => write!(f, "Переповнений Стек"),
             StackUnderflow => write!(f, "Незаповненість Стека"),
-            IntegerOverflow => write!(f, "Перевищено Ліміт Цілого Числа"),
-            InvalidOperandValue { operand, inst } => {
-                write!(
-                    f,
-                    "Невірний Операнд \"{operand}\" для інструкціЇ \"{inst}\""
-                )
+            ValueOverflow => write!(f, "Перевищено Ліміт Цілого Числа"),
+            ValueUnderflow => write!(f, ""),
+            InvalidOperandValue => {
+                write!(f, "Невірний Операнд")
             }
-            IlligalInstructionOperands { inst, val_a, val_b } => write!(
-                f,
-                "Неможливо виконати \"{inst}\" для значень \"{val_b}\" та \"{val_a}\""
-            ),
+            IlligalInstructionOperands => write!(f, "Неможливо Виконати Інструкцію"),
             InstLimitkOverflow(size) => write!(
                 f,
                 "Перевищено Ліміт Інструкцій: {size} з доступних {PROGRAM_INST_CAPACITY}"
