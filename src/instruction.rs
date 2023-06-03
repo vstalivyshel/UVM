@@ -3,6 +3,8 @@ use crate::{Array, Panic, PROGRAM_INST_CAPACITY};
 pub const INST_CHUNCK_SIZE: usize = 10;
 pub type SerializedInst = [u8; INST_CHUNCK_SIZE];
 
+// TODO: stack: float, float and dupe will produce int for some reason: fix it
+
 // All values on stack stored as f64 to save as much
 // information as possible without unneeded overhead.
 #[derive(Copy, Clone, Debug, Default)]
@@ -206,6 +208,7 @@ impl Instruction {
             _ => return Err(Panic::InvalidBinaryInstruction),
         };
 
+		#[derive(Debug)]
         enum TypeValue {
             Float,
             Uint,
@@ -213,10 +216,10 @@ impl Instruction {
         }
 
         let mut inst_opts = se[1];
-        let type_value = if inst_opts % 200 == 0 {
+        let type_value = if inst_opts >= 200 {
             inst_opts %= 200;
             TypeValue::Float
-        } else if inst_opts % 100 == 0 {
+        } else if inst_opts >= 100 {
             inst_opts %= 100;
             TypeValue::Uint
         } else {
@@ -231,7 +234,7 @@ impl Instruction {
         };
 
         let with_operand = inst_opts != 0;
-        let operand_chunck = &se[1..INST_CHUNCK_SIZE];
+        let operand_chunck = &se[2..INST_CHUNCK_SIZE];
         let operand = if with_operand && operand_chunck.contains(&b'N') {
             return Err(Panic::InvalidOperandValue);
         } else if !with_operand && operand_chunck.contains(&b'N') {
@@ -254,9 +257,8 @@ impl Instruction {
     }
 }
 
-pub fn assemble(source: &Array<Instruction, PROGRAM_INST_CAPACITY>) -> String {
+pub fn assemble(source: &[Instruction]) -> String {
     source
-        .items
         .iter()
         .map(|inst| {
             let mut inst = inst.to_string();

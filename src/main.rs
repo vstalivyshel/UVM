@@ -30,6 +30,7 @@ pub enum Panic {
     DivByZero,
 }
 
+#[derive(Debug)]
 pub struct VM {
     stack: Array<Value, VM_STACK_CAPACITY>,
     program: Array<Instruction, PROGRAM_INST_CAPACITY>,
@@ -38,12 +39,10 @@ pub struct VM {
 
 impl VM {
     fn load_from_file<P: AsRef<Path>>(&mut self, path: P) -> Result<(), Panic> {
-        let buf = match fs::read(path.as_ref()) {
-            Ok(i) => i,
-            Err(io_err) => return Err(Panic::ReadFileErr(io_err)),
-        };
-
-        for inst_chunck in buf.chunks(INST_CHUNCK_SIZE) {
+        for inst_chunck in fs::read(path.as_ref())
+            .map_err(Panic::ReadFileErr)?
+            .chunks(INST_CHUNCK_SIZE)
+        {
             let inst = Instruction::deserialize(inst_chunck.try_into().unwrap())?;
             self.program.push(inst);
         }
@@ -54,12 +53,11 @@ impl VM {
     pub fn save_into_file(&self, file: Option<String>) -> Result<(), Panic> {
         let mut buf = Array::<SerializedInst, PROGRAM_INST_CAPACITY>::new();
 
-        for inst in self.program.items.iter() {
+        for inst in self.program.get_all().iter() {
             buf.push(inst.serialize()?);
         }
 
-        let ser_prog = buf.items.concat();
-
+        let ser_prog = buf.get_all().concat();
         match file {
             Some(f) => fs::write(f, ser_prog.as_slice()),
             _ => io::stdout().lock().write_all(ser_prog.as_slice()),
@@ -125,6 +123,7 @@ impl VM {
                 }
                 let a = self.stack.items[self.stack.size - 1];
                 let b = self.stack.items[self.stack.size - 2];
+
                 self.stack_push(Value::Uint(a.is_eq_to(b) as usize))
             }
             Sum => math!(+),
@@ -197,7 +196,7 @@ impl VM {
                 output_file,
             } => {
                 state.load_from_file(target_file)?;
-                let res = instruction::assemble(&state.program);
+                let res = instruction::assemble(&state.program.get_all());
                 if let Some(f) = output_file {
                     fs::write(f, res)
                 } else {
@@ -249,6 +248,7 @@ impl VM {
     }
 }
 
+#[derive(Debug)]
 enum Configuration {
     Dump {
         target_file: String,
@@ -277,16 +277,13 @@ fn main() {
         _ => return,
     };
 
-    if args.any(|a| a.contains("-h")) {
-        return utils::print_usage();
-    }
-
     let config = match sub.as_str() {
         "dump" => {
             let mut target_file = String::new();
             let mut inst_limit: Option<usize> = None;
             while let Some(arg) = args.next() {
                 match arg.as_str() {
+                    "-h" => return utils::print_usage(),
                     "-l" => match args.next() {
                         Some(limit) => match limit.parse::<usize>() {
                             Ok(l) => inst_limit = Some(l),
@@ -295,7 +292,7 @@ fn main() {
 
                         _ => return eprintln!("[!] Значення для ліміту не вказано"),
                     },
-                    f if Path::new(&f).is_file() => target_file = f.into(),
+                    f if Path::new(&f).is_file() => target_file = f.to_string(),
                     arg => return eprintln!("[!] Невідома опція для підкоманди \"{sub}\": {arg}"),
                 }
             }
@@ -310,6 +307,7 @@ fn main() {
             let mut output_file: Option<String> = None;
             while let Some(arg) = args.next() {
                 match arg.as_str() {
+                    "-h" => return utils::print_usage(),
                     "-o" => output_file = args.next(),
                     f if Path::new(&f).is_file() => target_file = f.into(),
                     arg => return eprintln!("[!] Невідома опція для підкоманди \"{sub}\": {arg}"),
@@ -329,7 +327,7 @@ fn main() {
             }
         }
 
-        _ => {
+        "emu" => {
             let mut target_file = String::new();
             let mut inst_limit: Option<usize> = None;
             let mut debug_inst = false;
@@ -337,6 +335,7 @@ fn main() {
 
             while let Some(a) = args.next() {
                 match a.as_str() {
+                    "-h" => return utils::print_usage(),
                     "-ds" => debug_stack = true,
                     "-di" => debug_inst = true,
                     "-l" => match args.next() {
@@ -358,6 +357,7 @@ fn main() {
                 debug_stack,
             }
         }
+        _ => return eprintln!("[!] Вказана невірна підкоманда"),
     };
 
     if let Err(e) = VM::start(config) {

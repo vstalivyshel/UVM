@@ -46,6 +46,7 @@ impl<T: Copy + Default, const N: usize> Default for Array<T, N> {
     }
 }
 
+#[derive(Debug)]
 pub struct Array<T, const N: usize> {
     pub items: [T; N],
     pub size: usize,
@@ -79,6 +80,10 @@ impl<T: Copy + Default, const N: usize> Array<T, N> {
 
     pub fn _replace(&mut self, idx: usize, item: T) {
         self.items[idx] = item;
+    }
+
+    pub fn get_all(&self) -> &[T] {
+        &self.items[..self.size]
     }
 }
 
