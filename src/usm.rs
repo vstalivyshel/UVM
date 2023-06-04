@@ -98,6 +98,7 @@ pub enum InstructionKind {
     Sub = 7,
     Mul = 8,
     Div = 9,
+    NotEq = 10,
 }
 
 impl InstructionKind {
@@ -114,6 +115,7 @@ impl InstructionKind {
             "множ" => Mul,
             "діли" => Div,
             "сума" => Sum,
+            "нерівн" => NotEq,
             inst => return Err(Panic::InvalidInstruction(inst.to_string())),
         })
     }
@@ -131,6 +133,7 @@ impl InstructionKind {
             Sub => false,
             Mul => false,
             Div => false,
+            NotEq => false,
         }
     }
 }
@@ -204,11 +207,12 @@ impl Instruction {
             7 => Sub,
             8 => Mul,
             9 => Div,
+            10 => NotEq,
             // I don't like this one
             _ => return Err(Panic::InvalidBinaryInstruction),
         };
 
-		#[derive(Debug)]
+        #[derive(Debug)]
         enum TypeValue {
             Float,
             Uint,

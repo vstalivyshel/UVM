@@ -1,7 +1,6 @@
-mod instruction;
+mod usm;
 mod utils;
-use crate::instruction::{Instruction, InstructionKind, SerializedInst, Value, INST_CHUNCK_SIZE};
-use crate::utils::DisplayValue;
+use crate::usm::{Instruction, InstructionKind, SerializedInst, Value, INST_CHUNCK_SIZE};
 use std::{
     fs,
     io::{self, Write},
@@ -66,9 +65,8 @@ impl VM {
     }
 
     pub fn disassemble_from_file<P: AsRef<Path>>(&mut self, path: P) -> Result<(), Panic> {
-        self.program = instruction::disassemble(
-            fs::read_to_string(path.as_ref()).map_err(Panic::ReadFileErr)?,
-        )?;
+        self.program =
+            usm::disassemble(fs::read_to_string(path.as_ref()).map_err(Panic::ReadFileErr)?)?;
 
         Ok(())
     }
@@ -81,7 +79,7 @@ impl VM {
             return Ok(());
         }
 
-        macro_rules! math {
+        macro_rules! pop_math_push {
             ($op:tt) => {{
                 let a = self.stack_pop()?;
                 let b = self.stack_pop()?.into_type_of(a);
@@ -110,26 +108,29 @@ impl VM {
             }
             Jump => {
                 let addr = inst.operand.into_uint().ok_or(Panic::InvalidOperandValue)?;
-                if addr > self.program.size {
+                if addr > self.inst_ptr {
                     return Err(Panic::InvalidOperandValue);
                 }
                 self.inst_ptr = addr;
 
                 return Ok(());
             }
-            Eq => {
+            NotEq | Eq => {
                 if self.stack.size < 2 {
                     return Err(Panic::StackUnderflow);
                 }
-                let a = self.stack.items[self.stack.size - 1];
-                let b = self.stack.items[self.stack.size - 2];
-
-                self.stack_push(Value::Uint(a.is_eq_to(b) as usize))
+                let a = self.stack.get_last();
+                let b = self.stack.get_from_end(1);
+                self.stack_push(Value::Uint(if inst.kind == Eq {
+                    a.is_eq_to(b) as usize
+                } else {
+                    !a.is_eq_to(b) as usize
+                }))
             }
-            Sum => math!(+),
-            Sub => math!(-),
-            Mul => math!(*),
-            Div => math!(+),
+            Sum => pop_math_push!(+),
+            Sub => pop_math_push!(-),
+            Mul => pop_math_push!(*),
+            Div => pop_math_push!(+),
         };
 
         self.inst_ptr += 1;
@@ -196,7 +197,7 @@ impl VM {
                 output_file,
             } => {
                 state.load_from_file(target_file)?;
-                let res = instruction::assemble(&state.program.get_all());
+                let res = usm::assemble(&state.program.get_all());
                 if let Some(f) = output_file {
                     fs::write(f, res)
                 } else {
@@ -206,11 +207,17 @@ impl VM {
             }
             Run {
                 target_file,
+                from_usm,
                 inst_limit,
                 debug_inst,
                 debug_stack,
             } => {
-                state.load_from_file(target_file)?;
+                if from_usm {
+                    state.disassemble_from_file(target_file)?;
+                } else {
+                    state.load_from_file(target_file)?;
+                };
+
                 let mut inst_count = 0;
                 let limit = match inst_limit {
                     Some(l) => l,
@@ -233,11 +240,7 @@ impl VM {
                         println!(
                             "СТЕК [{size}] : {v}",
                             size = state.stack.size,
-                            v = if state.stack.size < 1 {
-                                DisplayValue(state.stack.get(state.stack.size))
-                            } else {
-                                DisplayValue(state.stack.get(state.stack.size - 1))
-                            }
+                            v = state.stack.get_last()
                         );
                     }
                 }
@@ -256,6 +259,7 @@ enum Configuration {
     },
     Run {
         target_file: String,
+        from_usm: bool,
         inst_limit: Option<usize>,
         debug_inst: bool,
         debug_stack: bool,
@@ -274,26 +278,27 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let sub = match args.next() {
         Some(s) => s,
-        _ => return,
+        _ => return utils::print_usage_ua(""),
     };
 
-    let config = match sub.as_str() {
+	let sub = sub.as_str();
+    let config = match sub {
         "dump" => {
             let mut target_file = String::new();
             let mut inst_limit: Option<usize> = None;
             while let Some(arg) = args.next() {
                 match arg.as_str() {
-                    "-h" => return utils::print_usage(),
+                    "-h" => return utils::print_usage_ua(sub),
                     "-l" => match args.next() {
                         Some(limit) => match limit.parse::<usize>() {
                             Ok(l) => inst_limit = Some(l),
-                            _ => return eprintln!("[!] Встановлений неправельний ліміт"),
+                            _ => return eprintln!("ПОМИЛКА: Встановлений неправельний ліміт"),
                         },
 
-                        _ => return eprintln!("[!] Значення для ліміту не вказано"),
+                        _ => return eprintln!("ПОМИЛКА: Значення для ліміту не вказано"),
                     },
                     f if Path::new(&f).is_file() => target_file = f.to_string(),
-                    arg => return eprintln!("[!] Невідома опція для підкоманди \"{sub}\": {arg}"),
+                    arg => return eprintln!("ПОМИЛКА: Невідома опція для підкоманди \"{sub}\": {arg}"),
                 }
             }
 
@@ -302,19 +307,19 @@ fn main() {
                 inst_limit,
             }
         }
-        opt @ "usm" | opt @ "dusm" => {
+        "usm" | "dusm" => {
             let mut target_file = String::new();
             let mut output_file: Option<String> = None;
             while let Some(arg) = args.next() {
                 match arg.as_str() {
-                    "-h" => return utils::print_usage(),
+                    "-h" => return utils::print_usage_ua(sub),
                     "-o" => output_file = args.next(),
                     f if Path::new(&f).is_file() => target_file = f.into(),
-                    arg => return eprintln!("[!] Невідома опція для підкоманди \"{sub}\": {arg}"),
+                    arg => return eprintln!("ПОМИЛКА: Невідома опція для підкоманди \"{sub}\": {arg}"),
                 }
             }
 
-            if opt == "usm" {
+            if sub == "usm" {
                 Configuration::Assemble {
                     target_file,
                     output_file,
@@ -332,35 +337,39 @@ fn main() {
             let mut inst_limit: Option<usize> = None;
             let mut debug_inst = false;
             let mut debug_stack = false;
+            let mut from_usm = false;
 
             while let Some(a) = args.next() {
                 match a.as_str() {
-                    "-h" => return utils::print_usage(),
+                    "-usm" => from_usm = true,
+                    "-h" => return utils::print_usage_ua(sub),
                     "-ds" => debug_stack = true,
                     "-di" => debug_inst = true,
                     "-l" => match args.next() {
                         Some(limit) => match limit.parse::<usize>() {
                             Ok(l) => inst_limit = Some(l),
-                            _ => return eprintln!("[!] Встановлений неправельний ліміт"),
+                            _ => return eprintln!("ПОМИЛКА: Встановлений неправельний ліміт"),
                         },
-                        _ => return eprintln!("[!] Значення для ліміту не вказано"),
+                        _ => return eprintln!("ПОМИЛКА: Значення для ліміту не вказано"),
                     },
                     f if Path::new(&f).is_file() => target_file = f.into(),
-                    arg => return eprintln!("[!] Невідома опція для підкоманди \"{sub}\": {arg}"),
+                    arg => return eprintln!("ПОМИЛКА: Невідома опція для підкоманди \"{sub}\": {arg}"),
                 }
             }
 
             Configuration::Run {
                 target_file,
+                from_usm,
                 inst_limit,
                 debug_inst,
                 debug_stack,
             }
         }
-        _ => return eprintln!("[!] Вказана невірна підкоманда"),
+        "-h" => return utils::print_usage_ua(""),
+        no_sub => return eprintln!("ПОМИЛКА: Вказана невірна підкоманда: {no_sub}"),
     };
 
     if let Err(e) = VM::start(config) {
-        eprintln!("[!] {e}");
+        eprintln!("ПОМИЛКА: {e}");
     }
 }

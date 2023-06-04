@@ -1,40 +1,55 @@
-
-### Ukrainian Virtual Machine  
+## Ukrainian Virtual Machine  
 ### Very much WIP
 
 Source of inspiration: https://github.com/tsoding/bm
 
-Goals:  
-- Learn things.  
-- Build a simple virtual machine.  
-- Build an assembly for this VM.  
-- Try to create a programming language using the assembly of my VM.
+### Goals:  
+- Learn things.  
 
-And all that great stuff will be interfaced in Ukrainian.
+### Usage:
 
-Progress:
+- emu - run the instructions from the provided file.
+```
+./uvm emu [OPT] <FILE>
 
-- [x] Basic stack implementation:  
-```  
-Basic instructions: Push, Drop, Dup, DupAt  
-Binary instructions: Sub, Sum, Mul, Div, Eq  
-Flow instructions: Jump, JumpIf  
+[OPT]
+    -usm - translate the USM instructions from the file <FILE> and execute them
+    -l <NUM> - set a limit on executed instructions
+    -ds - dump all changes to the stack while executing the instructions
+    -di - dump list of each executed instruction
 ```
 
-- [x] (De)serealization of the instructions, which allow UVM to read/write byte code from/to a file.  
-- [ ] CLI:  
+- dusm - translate the USM (assembly) from the file into bytecode.
 ```
--b - indicates that the loaded file contains binary instructions
--l <N> - limit number of executed instructions to <N>
--di - dump each executed instruction to the stdout  
--ds - dump stack values after each executed instruction  
+./uvm dusm [OPT] <FILE>
+
+[OPT]
+    -o <OUTPUT FILE> - write translated into bytecode instructions into the <OUTPUT FILE>
 ```
 
-- [ ] Assembly
-```
-# This is not the final version
 
-клади 60 	#  push 60 on the stack
+- usm - translate the bytecode of instructions from the file into the USM
+```
+./uvm usm [OPT] <FILE>
+
+[OPT]
+    -o <OUTPUT FILE> - write translated into USM instructions into the <OUTPUT FILE>
+```
+
+
+- dump - read the instructions from the file without execution and dump them into stdout
+
+```
+./uvm dump [OPT] <FILE>
+[OPT]
+    -l <NUM> - set a limit on dumped instructions
+```
+
+### Examples 
+- Basics
+```
+
+клади 60 	#  push 60 on the stack
 клади 9  	# push 9 on the stack
 сума     	# sum the top values of the stack
 копію    	# duplicate the top value
@@ -49,13 +64,15 @@ Flow instructions: Jump, JumpIf  
 
 клади 3         # 2
 
-# After labeling instruction you can use 'крок' (jump) with the label name as an argument
+# After labeling an instruction, you can use 'крок' (jump) with the label name as an argument
 крок собака3 # Jump to instruction 2
 крок собака2 # Jump to 1
 крок собака # Jump to 0
 
 # Each instruction can have '?' as suffix, which indicates that
-# it will be execute only if the top value of the stack is greater that zero
+# it will be executed only if the top value of the stack is greater than zero
+# '?' operator will pop the top value, so it might be useful to 'копію 0' duplicate
+# that value or to use one of the comparison instructions: 'рівн' (equale) or 'нерівн' (not equale), that will push 1 or 0 on top.
 клади 1 	# push 1 on top of the stack
 клади 2 	# push 2
 рівн    	# check for equality: false, so push 0
@@ -64,7 +81,17 @@ Flow instructions: Jump, JumpIf  
 сума?   	# this will be executed: 2 != 0
 
 ```
-- [ ] Ua-En dictionary for the instructions
+- For loop:
+```
+# loop will iterate until it reaches 10
+клади 10
+клади 0 # starting point
+киця:
+    клади 1 # this instruction is labeled as 'киця' and this is our step instruction
+	сума # pop 1 and 0 and push their sum
+	нерівн # 'Not Equale' instruction will push 1
+	крок? киця # check if top > 0 and decide whether to jump to a label or not
 
-- [ ] TODO
+	клади 69 # last instruction will push 69 and exit the program
 
+```

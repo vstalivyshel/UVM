@@ -25,19 +25,101 @@ macro_rules! prog {
     };
 }
 
-pub fn print_usage() {
-    eprintln!(
-        "./uvm [ОПЦ] <ФАЙЛ>
-<ФАЙЛ> - файл з байткодом інструкцій УВМ
-[ОПЦ]:
-    -usm - перевести <ФАЙЛ> формату USM (assembly) на байткод
-    -dusm - перевести <ФАЙЛ> з байткодом на USM (assembly)
-    -dump - показати інструкціЇ у вказаному файлі без виконяння
+pub fn print_usage_ua(sub: &str) {
+	let general =  "./uvm [ПІДКОМАНДА] [ОПЦ] <ФАЙЛ>
+
+[ПІДКОМАНДА]
+    emu - виконати інструкції UVM з <ФАЙЛУ>
+    usm - перекласти <ФАЙЛ> з байткодом інструкцій UVM на USM (assembly)
+    dusm - перекласти <ФАЙЛ> формату USM (assembly) на байткод з інструкціями UVM
+    dump - прочитати <ФАЙЛ> без виконання інструкцій та показати лист цих інструкцій
+
+[ОПЦ]
+    -h - показати це повідомлення";
+
+    let emu = "./uvm emu [ОПЦ] <ФАЙЛ>
+
+[ОПЦ]
+    -usm - перекласти <ФАЙЛ> формату USM (assembly) на байткод інструкцій UVM та виконати їх
     -l <ЧИС> - встановити ліміт на кількість виконуваних інструкцій
     -ds - показати всі зміни стеку на протязі виконня програми
     -di - показати лист виконаних інструкцій
-    -h - показати це повідомлення"
-    )
+    -h - показати це повідомлення";
+
+    let dusm = "./uvm dusm [ОПЦ] <ФАЙЛ>
+
+[ОПЦ]
+    -o <ВИХІДНИЙ ФАЙЛ> - записати байткод інструкцій до <ВИХІДНОГО ФАЙЛУ>
+    -h - показати це повідомлення";
+
+    let usm = "./uvm usm [ОПЦ] <ФАЙЛ>
+
+[ОПЦ]
+    -o <ВИХІДНИЙ ФАЙЛ> - записати перекладені на USM (assembly) інструкціЇ до <ВИХІДНОГО ФАЙЛУ>
+    -h - показати це повідомлення";
+
+    let dump = "./uvm usm [ОПЦ] <ФАЙЛ>
+
+[ОПЦ]
+    -l <ЧИС> - встановити ліміт на кількість показаних інструкцій
+    -h - показати це повідомлення";
+
+    eprintln!("{}", match sub {
+        "emu" => emu,
+        "dusm" => dusm,
+        "usm" => usm,
+        "dump" => dump,
+        _ => general,
+    });
+}
+
+pub fn print_usage_en(sub: &str) {
+	let general =  "./uvm [SUBCMD] [OPT] <FILE>
+
+[SUBCMD]
+    emu - run the instructions from the <FILE>
+    usm - translate the bytecode of instructions from the <FILE> into the USM (assembly)
+    dusm - translate the USM (assembly) from the file <FILE> into bytecode
+    dump - read the instructions from the <FILE> without execution and dump them into stdout
+
+[OPT]
+    -h - show this message";
+
+    let emu = "./uvm emu [OPT] <FILE>
+
+[OPT]
+    -usm - перекласти <FILE> формату USM (assembly) на байткод інструкцій UVM та виконати їх
+    -usm - translate the USM instructions from the file <FILE> and execute them
+    -l <NUM> - set a limit of executed instructions
+    -ds - dump all changes to the stack while executing the instructions
+    -di - dump list of each executed instruction
+    -h - show this message";
+
+    let dusm = "./uvm dusm [OPT] <FILE>
+
+[OPT]
+    -o <OUTPUT FILE> - write translated into bytecode instructions into the <OUTPUT FILE>
+    -h - show this message";
+
+    let usm = "./uvm usm [OPT] <FILE>
+
+[OPT]
+    -o <OUTPUT FILE> - write translated into USM instructions into the <OUTPUT FILE>
+    -h - show this message";
+
+    let dump = "./uvm usm [OPT] <FILE>
+
+[OPT]
+    -l <NUM> - set a limit of dumped instructions
+    -h - show this message";
+
+    eprintln!("{}", match sub {
+        "emu" => emu,
+        "dusm" => dusm,
+        "usm" => usm,
+        "dump" => dump,
+        _ => general,
+    });
 }
 
 impl<T: Copy + Default, const N: usize> Default for Array<T, N> {
@@ -60,8 +142,12 @@ impl<T: Copy + Default, const N: usize> Array<T, N> {
         }
     }
 
-    pub fn _get_last(&self) -> T {
-        self.items[if self.size < 1 { 0 } else { self.size - 1 }]
+    pub fn get_from_end(&self, idx: usize) -> T {
+        self.items[self.size - (idx + 1)]
+    }
+
+    pub fn get_last(&self) -> T {
+        self.get_from_end(0)
     }
 
     pub fn push(&mut self, item: T) {
@@ -87,12 +173,9 @@ impl<T: Copy + Default, const N: usize> Array<T, N> {
     }
 }
 
-#[derive(Debug)]
-pub struct DisplayValue(pub Value);
-
-impl fmt::Display for DisplayValue {
+impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self.0 {
+        match self {
             Value::Float(v) => write!(f, "{v}"),
             Value::Uint(v) => write!(f, "{v}"),
             Value::Int(v) => write!(f, "{v}"),
@@ -108,7 +191,7 @@ impl fmt::Display for Instruction {
             "{kind}{cond} {oper}",
             kind = self.kind,
             cond = if self.conditional { "?" } else { "" },
-            oper = DisplayValue(self.operand),
+            oper = self.operand,
         )
     }
 }
@@ -127,6 +210,7 @@ impl fmt::Display for InstructionKind {
             Mul => write!(f, "множ"),
             Div => write!(f, "діли"),
             Sum => write!(f, "сума"),
+            NotEq => write!(f, "нерівн"),
         }
     }
 }
