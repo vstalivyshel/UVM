@@ -84,14 +84,15 @@ Source of inspiration: https://github.com/tsoding/bm
 - For loop:
 ```
 # loop will iterate until it reaches 10
-клади 10
-клади 0 # starting point
-киця:
-    клади 1 # this instruction is labeled as 'киця' and this is our step instruction
-	сума # pop 1 and 0 and push their sum
-	нерівн # 'Not Equale' instruction will push 1
-	крок? киця # check if top > 0 and decide whether to jump to a label or not
 
-	клади 69 # last instruction will push 69 and exit the program
+клади 10
+клади 0        		# starting point
+киця:
+    клади 1    		# this instruction is labeled as 'киця' and this is our step instruction
+	сума       		# pop 1 and 0 and push their sum
+	нерівн     		# 'Not Equale' instruction will push 1
+	крок? киця 		# check if top > 0 and decide whether to jump to a label or not
+
+	клади 69   		# last instruction will push 69 and exit the program
 
 ```
