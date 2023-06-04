@@ -26,7 +26,7 @@ macro_rules! prog {
 }
 
 pub fn print_usage_ua(sub: &str) {
-	let general =  "./uvm [ПІДКОМАНДА] [ОПЦ] <ФАЙЛ>
+    let general = "./uvm [ПІДКОМАНДА] [ОПЦ] <ФАЙЛ>
 
 [ПІДКОМАНДА]
     emu - виконати інструкції UVM з <ФАЙЛУ>
@@ -64,62 +64,16 @@ pub fn print_usage_ua(sub: &str) {
     -l <ЧИС> - встановити ліміт на кількість показаних інструкцій
     -h - показати це повідомлення";
 
-    eprintln!("{}", match sub {
-        "emu" => emu,
-        "dusm" => dusm,
-        "usm" => usm,
-        "dump" => dump,
-        _ => general,
-    });
-}
-
-pub fn print_usage_en(sub: &str) {
-	let general =  "./uvm [SUBCMD] [OPT] <FILE>
-
-[SUBCMD]
-    emu - run the instructions from the <FILE>
-    usm - translate the bytecode of instructions from the <FILE> into the USM (assembly)
-    dusm - translate the USM (assembly) from the file <FILE> into bytecode
-    dump - read the instructions from the <FILE> without execution and dump them into stdout
-
-[OPT]
-    -h - show this message";
-
-    let emu = "./uvm emu [OPT] <FILE>
-
-[OPT]
-    -usm - перекласти <FILE> формату USM (assembly) на байткод інструкцій UVM та виконати їх
-    -usm - translate the USM instructions from the file <FILE> and execute them
-    -l <NUM> - set a limit of executed instructions
-    -ds - dump all changes to the stack while executing the instructions
-    -di - dump list of each executed instruction
-    -h - show this message";
-
-    let dusm = "./uvm dusm [OPT] <FILE>
-
-[OPT]
-    -o <OUTPUT FILE> - write translated into bytecode instructions into the <OUTPUT FILE>
-    -h - show this message";
-
-    let usm = "./uvm usm [OPT] <FILE>
-
-[OPT]
-    -o <OUTPUT FILE> - write translated into USM instructions into the <OUTPUT FILE>
-    -h - show this message";
-
-    let dump = "./uvm usm [OPT] <FILE>
-
-[OPT]
-    -l <NUM> - set a limit of dumped instructions
-    -h - show this message";
-
-    eprintln!("{}", match sub {
-        "emu" => emu,
-        "dusm" => dusm,
-        "usm" => usm,
-        "dump" => dump,
-        _ => general,
-    });
+    eprintln!(
+        "{}",
+        match sub {
+            "emu" => emu,
+            "dusm" => dusm,
+            "usm" => usm,
+            "dump" => dump,
+            _ => general,
+        }
+    );
 }
 
 impl<T: Copy + Default, const N: usize> Default for Array<T, N> {
@@ -179,7 +133,7 @@ impl fmt::Display for Value {
             Value::Float(v) => write!(f, "{v}"),
             Value::Uint(v) => write!(f, "{v}"),
             Value::Int(v) => write!(f, "{v}"),
-            Value::Null => write!(f, ""),
+            Value::Null => write!(f, "_"),
         }
     }
 }

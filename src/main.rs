@@ -30,7 +30,7 @@ pub enum Panic {
 }
 
 #[derive(Debug)]
-pub struct VM {
+struct VM {
     stack: Array<Value, VM_STACK_CAPACITY>,
     program: Array<Instruction, PROGRAM_INST_CAPACITY>,
     inst_ptr: usize,
@@ -42,14 +42,14 @@ impl VM {
             .map_err(Panic::ReadFileErr)?
             .chunks(INST_CHUNCK_SIZE)
         {
-            let inst = Instruction::deserialize(inst_chunck.try_into().unwrap())?;
-            self.program.push(inst);
+            self.program
+                .push(Instruction::deserialize(inst_chunck.try_into().unwrap())?);
         }
 
         Ok(())
     }
 
-    pub fn save_into_file(&self, file: Option<String>) -> Result<(), Panic> {
+    fn save_into_file(&self, file: Option<String>) -> Result<(), Panic> {
         let mut buf = Array::<SerializedInst, PROGRAM_INST_CAPACITY>::new();
 
         for inst in self.program.get_all().iter() {
@@ -57,6 +57,7 @@ impl VM {
         }
 
         let ser_prog = buf.get_all().concat();
+
         match file {
             Some(f) => fs::write(f, ser_prog.as_slice()),
             _ => io::stdout().lock().write_all(ser_prog.as_slice()),
@@ -64,7 +65,7 @@ impl VM {
         .map_err(Panic::WriteToFileErr)
     }
 
-    pub fn disassemble_from_file<P: AsRef<Path>>(&mut self, path: P) -> Result<(), Panic> {
+    fn disassemble_from_file<P: AsRef<Path>>(&mut self, path: P) -> Result<(), Panic> {
         self.program =
             usm::disassemble(fs::read_to_string(path.as_ref()).map_err(Panic::ReadFileErr)?)?;
 
@@ -74,7 +75,7 @@ impl VM {
     fn execute_instruction(&mut self) -> Result<(), Panic> {
         let inst = self.program.get(self.inst_ptr);
 
-        if inst.conditional && self.stack_pop()?.into_uint().is_some_and(|v| v == 0) {
+        if inst.conditional && self.stack_pop()?.into_uint()? == 0 {
             self.inst_ptr += 1;
             return Ok(());
         }
@@ -88,7 +89,8 @@ impl VM {
                     (Int(a), Int(b)) => self.stack_push(Int(a $op b)),
                     (Uint(a), Uint(b)) => self.stack_push(Uint(a $op b)),
                     (Float(a), Float(b)) => self.stack_push(Float(a $op b)),
-                    _ => Ok(()),
+                    // We are not allowed to push or pop Null values
+                    _ => unreachable!(),
                 }
             }};
         }
@@ -98,16 +100,12 @@ impl VM {
             Nop => Ok(()),
             Push => self.stack_push(inst.operand),
             Drop => {
-                let _ = self.stack.pop();
+                let _ = self.stack_pop()?;
                 Ok(())
             }
-            Dup => {
-                let target = self.stack_pop()?;
-                self.stack_push(target)?;
-                self.stack_push(target)
-            }
+            Dup => self.stack_push(self.stack_take(inst.operand.into_uint()?)?),
             Jump => {
-                let addr = inst.operand.into_uint().ok_or(Panic::InvalidOperandValue)?;
+                let addr = inst.operand.into_uint()?;
                 if addr > self.inst_ptr {
                     return Err(Panic::InvalidOperandValue);
                 }
@@ -116,16 +114,11 @@ impl VM {
                 return Ok(());
             }
             NotEq | Eq => {
-                if self.stack.size < 2 {
-                    return Err(Panic::StackUnderflow);
-                }
-                let a = self.stack.get_last();
-                let b = self.stack.get_from_end(1);
-                self.stack_push(Value::Uint(if inst.kind == Eq {
-                    a.is_eq_to(b) as usize
-                } else {
-                    !a.is_eq_to(b) as usize
-                }))
+                let a = self.stack_take(0)?;
+                let b = self.stack_take(1)?;
+                self.stack_push(Value::Uint(
+                    ((inst.kind == Eq) & (a == b)) as usize | (a != b) as usize,
+                ))
             }
             Sum => pop_math_push!(+),
             Sub => pop_math_push!(-),
@@ -135,6 +128,16 @@ impl VM {
 
         self.inst_ptr += 1;
         result
+    }
+
+    fn stack_take(&self, idx: usize) -> Result<Value, Panic> {
+        if self.stack.size == 0 {
+            return Err(Panic::StackUnderflow);
+        } else if idx > self.stack.size {
+            return Err(Panic::InvalidOperandValue);
+        }
+
+        Ok(self.stack.get_from_end(idx))
     }
 
     fn stack_push(&mut self, value: Value) -> Result<(), Panic> {
@@ -150,16 +153,15 @@ impl VM {
 
     fn stack_pop(&mut self) -> Result<Value, Panic> {
         if self.stack.size == 0 {
-            Err(Panic::StackUnderflow)
-        } else {
-            let value = self.stack.pop();
-
-            if value.is_null() {
-                return Err(Panic::StackUnderflow);
-            }
-
-            Ok(value)
+            return Err(Panic::StackUnderflow);
         }
+
+        let value = self.stack.pop();
+        if value.is_null() {
+            return Err(Panic::StackUnderflow);
+        }
+
+        Ok(value)
     }
 
     fn start(config: Configuration) -> VMResult<()> {
@@ -197,7 +199,7 @@ impl VM {
                 output_file,
             } => {
                 state.load_from_file(target_file)?;
-                let res = usm::assemble(&state.program.get_all());
+                let res = usm::assemble(state.program.get_all());
                 if let Some(f) = output_file {
                     fs::write(f, res)
                 } else {
@@ -219,12 +221,9 @@ impl VM {
                 };
 
                 let mut inst_count = 0;
-                let limit = match inst_limit {
-                    Some(l) => l,
-                    _ => PROGRAM_INST_CAPACITY,
-                };
+                let limit = inst_limit.unwrap_or(0);
 
-                while state.inst_ptr < state.program.size && inst_count != limit {
+                while state.inst_ptr < state.program.size && limit != 0 && inst_count == limit {
                     if debug_inst {
                         println!(
                             "+ ІНСТ {ptr} : {inst}",
@@ -281,7 +280,7 @@ fn main() {
         _ => return utils::print_usage_ua(""),
     };
 
-	let sub = sub.as_str();
+    let sub = sub.as_str();
     let config = match sub {
         "dump" => {
             let mut target_file = String::new();
@@ -298,7 +297,12 @@ fn main() {
                         _ => return eprintln!("ПОМИЛКА: Значення для ліміту не вказано"),
                     },
                     f if Path::new(&f).is_file() => target_file = f.to_string(),
-                    arg => return eprintln!("ПОМИЛКА: Невідома опція для підкоманди \"{sub}\": {arg}"),
+                    wrong_op if wrong_op.starts_with('-') => {
+                        return eprintln!("ПОМИЛКА: Вказана помилкова опція: {wrong_op}")
+                    }
+                    wrong_file => {
+                        return eprintln!("ПОМИЛКА: Вказано неіснуючий файл: {wrong_file}")
+                    }
                 }
             }
 
@@ -315,7 +319,12 @@ fn main() {
                     "-h" => return utils::print_usage_ua(sub),
                     "-o" => output_file = args.next(),
                     f if Path::new(&f).is_file() => target_file = f.into(),
-                    arg => return eprintln!("ПОМИЛКА: Невідома опція для підкоманди \"{sub}\": {arg}"),
+                    wrong_op if wrong_op.starts_with('-') => {
+                        return eprintln!("ПОМИЛКА: Вказана помилкова опція: {wrong_op}")
+                    }
+                    wrong_file => {
+                        return eprintln!("ПОМИЛКА: Вказано неіснуючий файл: {wrong_file}")
+                    }
                 }
             }
 
@@ -348,12 +357,21 @@ fn main() {
                     "-l" => match args.next() {
                         Some(limit) => match limit.parse::<usize>() {
                             Ok(l) => inst_limit = Some(l),
-                            _ => return eprintln!("ПОМИЛКА: Встановлений неправельний ліміт"),
+                            _ => {
+                                return eprintln!(
+                                    "ПОМИЛКА: Встановлений неправельний ліміт: {limit}"
+                                )
+                            }
                         },
                         _ => return eprintln!("ПОМИЛКА: Значення для ліміту не вказано"),
                     },
                     f if Path::new(&f).is_file() => target_file = f.into(),
-                    arg => return eprintln!("ПОМИЛКА: Невідома опція для підкоманди \"{sub}\": {arg}"),
+                    wrong_op if wrong_op.starts_with('-') => {
+                        return eprintln!("ПОМИЛКА: Вказана помилкова опція: {wrong_op}")
+                    }
+                    wrong_file => {
+                        return eprintln!("ПОМИЛКА: Вказано неіснуючий файл: {wrong_file}")
+                    }
                 }
             }
 
@@ -366,7 +384,10 @@ fn main() {
             }
         }
         "-h" => return utils::print_usage_ua(""),
-        no_sub => return eprintln!("ПОМИЛКА: Вказана невірна підкоманда: {no_sub}"),
+        wrong_sub if wrong_sub.starts_with('-') => {
+            return eprintln!("ПОМИЛКА: Вказана помилкова підкоманда: {wrong_sub}")
+        }
+        wrong_file => return eprintln!("ПОМИЛКА: Вказано неіснуючий файл: {wrong_file}"),
     };
 
     if let Err(e) = VM::start(config) {

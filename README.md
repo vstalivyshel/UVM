@@ -96,3 +96,21 @@ Source of inspiration: https://github.com/tsoding/bm
     клади 69        # last instruction will push 69 and exit the program
 
 ```
+
+- For loop #2
+```
+# This one will iterate until it reaches 0
+
+клади 10
+клади 10            # starting point
+клади 0             # little bit of a hack to have a 'кинь' (drop) instruction in the beginning of the loop
+
+абоба:
+    кинь
+    клади -1        # step
+    сума
+    клади 0         # push 0 to compare with our initial value, then we will drop this one on the next iteration
+    нерівн          # not equal to zero at this point, so push 1
+    крок? абоба     # pop and check if larger than 0 and then jump
+    клади 69
+```

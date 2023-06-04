@@ -3,11 +3,7 @@ use crate::{Array, Panic, PROGRAM_INST_CAPACITY};
 pub const INST_CHUNCK_SIZE: usize = 10;
 pub type SerializedInst = [u8; INST_CHUNCK_SIZE];
 
-// TODO: stack: float, float and dupe will produce int for some reason: fix it
-
-// All values on stack stored as f64 to save as much
-// information as possible without unneeded overhead.
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub enum Value {
     Float(f64),
     Int(isize),
@@ -17,32 +13,32 @@ pub enum Value {
 }
 
 impl Value {
-    pub fn into_float(self) -> Option<f64> {
+    pub fn into_float(self) -> Result<f64, Panic> {
         use Value::*;
         match self {
-            Float(v) => Some(v),
-            Int(v) => Some(v as f64),
-            Uint(v) => Some(v as f64),
-            Null => None,
+            Float(v) => Ok(v),
+            Int(v) => Ok(v as f64),
+            Uint(v) => Ok(v as f64),
+            Null => Err(Panic::InvalidOperandValue),
         }
     }
 
-    pub fn into_int(self) -> Option<isize> {
+    pub fn into_int(self) -> Result<isize, Panic> {
         use Value::*;
         match self {
-            Float(v) => Some(v as isize),
-            Int(v) => Some(v),
-            Uint(v) => Some(v as isize),
-            Null => None,
+            Float(v) => Ok(v as isize),
+            Int(v) => Ok(v),
+            Uint(v) => Ok(v as isize),
+            Null => Err(Panic::InvalidOperandValue),
         }
     }
-    pub fn into_uint(self) -> Option<usize> {
+    pub fn into_uint(self) -> Result<usize, Panic> {
         use Value::*;
         match self {
-            Float(v) => Some(v as usize),
-            Int(v) => Some(v as usize),
-            Uint(v) => Some(v),
-            Null => None,
+            Float(v) => Ok(v as usize),
+            Int(v) => Ok(v as usize),
+            Uint(v) => Ok(v),
+            Null => Err(Panic::InvalidOperandValue),
         }
     }
 
@@ -63,26 +59,7 @@ impl Value {
             Null => Null,
         }
     }
-
-    pub fn is_eq_to(&self, other: Value) -> bool {
-        use Value::*;
-        match self {
-            Float(v) => other.into_float().is_some_and(|other_v| *v == other_v),
-            Int(v) => other.into_int().is_some_and(|other_v| *v == other_v),
-            Uint(v) => other.into_uint().is_some_and(|other_v| *v == other_v),
-            Null => other.is_null(),
-        }
-    }
 }
-
-// Type of the value(s) will be stored in 'type' register, which
-// used to tell how do we wont to represent this value(s)
-// for next instructions.
-// 'type' can be changed using 'типу' (type) instruction
-// with the following arguments:
-// 		'зціле' - int
-// 		'ціле' - uint
-// 		'дроб' - float
 
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, PartialEq, Default)]
@@ -119,13 +96,32 @@ impl InstructionKind {
             inst => return Err(Panic::InvalidInstruction(inst.to_string())),
         })
     }
+	fn try_from_idx(idx: u8) -> Result<Self, Panic> {
+    	use InstructionKind::*;
+    	let res = match idx {
+            0 => Nop,
+            1 => Push,
+            2 => Dup,
+            3 => Drop,
+            4 => Eq,
+            5 => Jump,
+            6 => Sum,
+            7 => Sub,
+            8 => Mul,
+            9 => Div,
+            10 => NotEq,
+            _ => return Err(Panic::InvalidBinaryInstruction),
+        };
 
+        Ok(res)
+
+}
     fn has_operand(&self) -> bool {
         use InstructionKind::*;
         match self {
             Nop => false,
             Push => true,
-            Dup => false,
+            Dup => true,
             Drop => false,
             Eq => false,
             Jump => true,
@@ -147,32 +143,22 @@ pub struct Instruction {
 
 impl Instruction {
     // Serialized instruction contains 10 bytes:
-    // 		1 - enum's variant of InstructionKind
-    // 		2 - gives information about instruction:
-    // 			   - with_operand:
-    // 			   		1 - supposed to have an operand,
-    // 			   		0 - not
-    // 			   - conditional:
-    // 			   		10 - conditional,
-    // 			   		00 - not
-    // 			   - type:
-    // 			   		f64 - 200,
-    // 			   		u64 - 100,
-    // 			   		i64 - 000
+    // 		1 - kind of instruction
+    // 		2 - information about instruction and it's operand
+    // 			1/0 -conditional/not
+    // 			i < 10 - operand is Value::Null
+    // 			i >= 10 - operand is i64
+    // 			i >= 100 - operand is u64
+    // 			i >= 200 - operand is f64
     //
-    // 		3..=10 - bytes representation of the value or
-    // 				'N' char if no operand was supplied
+    // 		3..=10 - bytes representation of the value
 
     pub fn serialize(&self) -> Result<SerializedInst, Panic> {
         let mut se = [0; INST_CHUNCK_SIZE];
         se[0] = self.kind as u8;
 
-        if self.kind.has_operand() {
-            se[1] += 1;
-        }
-
         if self.conditional {
-            se[1] += 10;
+            se[1] += 1;
         }
 
         use Value::*;
@@ -186,71 +172,45 @@ impl Instruction {
                 se[2..].copy_from_slice(i.to_le_bytes().as_slice());
             }
             Int(i) => {
+                se[1] += 10;
                 se[2..].copy_from_slice(i.to_le_bytes().as_slice());
             }
-            Null => se[2] = b'N',
+            Null => {}
         }
 
         Ok(se)
     }
 
     pub fn deserialize(se: SerializedInst) -> Result<Instruction, Panic> {
-        use InstructionKind::*;
-        let kind = match se[0] {
-            0 => Nop,
-            1 => Push,
-            2 => Dup,
-            3 => Drop,
-            4 => Eq,
-            5 => Jump,
-            6 => Sum,
-            7 => Sub,
-            8 => Mul,
-            9 => Div,
-            10 => NotEq,
-            // I don't like this one
-            _ => return Err(Panic::InvalidBinaryInstruction),
-        };
 
         #[derive(Debug)]
-        enum TypeValue {
+        enum TypeOfValue {
             Float,
             Uint,
             Int,
+            Null,
         }
 
-        let mut inst_opts = se[1];
-        let type_value = if inst_opts >= 200 {
-            inst_opts %= 200;
-            TypeValue::Float
-        } else if inst_opts >= 100 {
-            inst_opts %= 100;
-            TypeValue::Uint
-        } else {
-            TypeValue::Int
+        use TypeOfValue::*;
+
+        let kind = InstructionKind::try_from_idx(se[0])?;
+        let inst_opts = se[1];
+        let (n, type_value) = match inst_opts {
+            200.. => (200, Float),
+            100.. => (100, Uint),
+            10.. => (10, Int),
+            _ => (0, Null),
         };
 
-        let conditional = if inst_opts >= 10 {
-            inst_opts %= 10;
-            true
-        } else {
-            false
-        };
-
-        let with_operand = inst_opts != 0;
+        let conditional = inst_opts % n != 0;
         let operand_chunck = &se[2..INST_CHUNCK_SIZE];
-        let operand = if with_operand && operand_chunck.contains(&b'N') {
-            return Err(Panic::InvalidOperandValue);
-        } else if !with_operand && operand_chunck.contains(&b'N') {
-            Value::Null
-        } else {
-            let chunck = operand_chunck.try_into().unwrap();
-            use TypeValue::*;
-            match type_value {
-                Float => Value::Float(f64::from_le_bytes(chunck)),
-                Int => Value::Int(isize::from_le_bytes(chunck)),
-                Uint => Value::Uint(usize::from_le_bytes(chunck)),
-            }
+        let chunck = operand_chunck.try_into().unwrap();
+        let operand = match type_value {
+            Null if kind.has_operand() => return Err(Panic::InvalidOperandValue),
+            Float => Value::Float(f64::from_le_bytes(chunck)),
+            Int => Value::Int(isize::from_le_bytes(chunck)),
+            Uint => Value::Uint(usize::from_le_bytes(chunck)),
+            Null => Value::Null,
         };
 
         Ok(Instruction {
@@ -273,6 +233,12 @@ pub fn assemble(source: &[Instruction]) -> String {
 }
 
 pub fn disassemble(source: String) -> Result<Array<Instruction, PROGRAM_INST_CAPACITY>, Panic> {
+    macro_rules! try_parse {
+        ($val:ident as $t:ty) => {
+            $val.parse::<$t>().map_err(|_| Panic::InvalidOperandValue)?
+        };
+    }
+
     let mut token_strem = source
         .lines()
         .filter(|line| !line.trim_start().starts_with('#'))
@@ -295,31 +261,26 @@ pub fn disassemble(source: String) -> Result<Array<Instruction, PROGRAM_INST_CAP
         let token = token.strip_suffix('?').unwrap_or(token);
         let kind = InstructionKind::try_from(token)?;
         let with_operand = kind.has_operand();
-        let operand = if with_operand {
-            match token_strem.next() {
-                Some(op) => {
-                    if let Ok(v) = op.parse::<f64>() {
-                        Value::Float(v)
-                    } else if let Ok(v) = op.parse::<usize>() {
-                        Value::Uint(v)
-                    } else if let Ok(v) = op.parse::<isize>() {
-                        Value::Int(v)
-                    } else if let Some((addr, _)) = lables_table
+        let mut operand = Value::Null;
+        if with_operand {
+            let op = token_strem.next().ok_or(Panic::InvalidOperandValue)?;
+            operand = match op.split_once('_') {
+                Some((val, suf)) => match suf.trim() {
+                    "дроб" => Value::Float(try_parse!(val as f64)),
+                    "ціл" => Value::Uint(try_parse!(val as usize)),
+                    "зціл" => Value::Int(try_parse!(val as isize)),
+                    _ => Value::Null,
+                },
+                _ => Value::Uint(
+                    lables_table
                         .items
                         .iter()
                         .find(|(_, label)| label.contains(op))
-                    {
-                        Value::Uint(*addr)
-                    } else {
-                        return Err(Panic::InvalidOperandValue);
-                    }
-                }
-
-                _ => return Err(Panic::InvalidOperandValue),
+                        .ok_or(Panic::InvalidOperandValue)?
+                        .0,
+                ),
             }
-        } else {
-            Value::Null
-        };
+        }
 
         program.push(Instruction {
             kind,
