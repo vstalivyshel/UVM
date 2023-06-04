@@ -65,9 +65,9 @@ Source of inspiration: https://github.com/tsoding/bm
 клади 3         # 2
 
 # After labeling an instruction, you can use 'крок' (jump) with the label name as an argument
-крок собака3 # Jump to instruction 2
-крок собака2 # Jump to 1
-крок собака # Jump to 0
+крок собака3 	# Jump to instruction 2
+крок собака2 	# Jump to 1
+крок собака  	# Jump to 0
 
 # Each instruction can have '?' as suffix, which indicates that
 # it will be executed only if the top value of the stack is greater than zero

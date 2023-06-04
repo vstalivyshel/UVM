@@ -37,7 +37,7 @@ struct VM {
 }
 
 impl VM {
-    fn load_from_file<P: AsRef<Path>>(&mut self, path: P) -> Result<(), Panic> {
+    fn load_from_file<P: AsRef<Path>>(&mut self, path: P) -> VMResult<()> {
         for inst_chunck in fs::read(path.as_ref())
             .map_err(Panic::ReadFileErr)?
             .chunks(INST_CHUNCK_SIZE)
@@ -49,7 +49,7 @@ impl VM {
         Ok(())
     }
 
-    fn save_into_file(&self, file: Option<String>) -> Result<(), Panic> {
+    fn save_into_file(&self, file: Option<String>) -> VMResult<()> {
         let mut buf = Array::<SerializedInst, PROGRAM_INST_CAPACITY>::new();
 
         for inst in self.program.get_all().iter() {
@@ -65,14 +65,14 @@ impl VM {
         .map_err(Panic::WriteToFileErr)
     }
 
-    fn disassemble_from_file<P: AsRef<Path>>(&mut self, path: P) -> Result<(), Panic> {
+    fn disassemble_from_file<P: AsRef<Path>>(&mut self, path: P) -> VMResult<()> {
         self.program =
             usm::disassemble(fs::read_to_string(path.as_ref()).map_err(Panic::ReadFileErr)?)?;
 
         Ok(())
     }
 
-    fn execute_instruction(&mut self) -> Result<(), Panic> {
+    fn execute_instruction(&mut self) -> VMResult<()> {
         let inst = self.program.get(self.inst_ptr);
 
         if inst.conditional && self.stack_pop()?.into_uint()? == 0 {
@@ -80,7 +80,7 @@ impl VM {
             return Ok(());
         }
 
-        macro_rules! pop_math_push {
+        macro_rules! math {
             ($op:tt) => {{
                 let a = self.stack_pop()?;
                 let b = self.stack_pop()?.into_type_of(a);
@@ -120,17 +120,17 @@ impl VM {
                     ((inst.kind == Eq) & (a == b)) as usize | (a != b) as usize,
                 ))
             }
-            Sum => pop_math_push!(+),
-            Sub => pop_math_push!(-),
-            Mul => pop_math_push!(*),
-            Div => pop_math_push!(+),
+            Sum => math!(+),
+            Sub => math!(-),
+            Mul => math!(*),
+            Div => math!(+),
         };
 
         self.inst_ptr += 1;
         result
     }
 
-    fn stack_take(&self, idx: usize) -> Result<Value, Panic> {
+    fn stack_take(&self, idx: usize) -> VMResult<Value> {
         if self.stack.size == 0 {
             return Err(Panic::StackUnderflow);
         } else if idx > self.stack.size {
@@ -140,7 +140,7 @@ impl VM {
         Ok(self.stack.get_from_end(idx))
     }
 
-    fn stack_push(&mut self, value: Value) -> Result<(), Panic> {
+    fn stack_push(&mut self, value: Value) -> VMResult<()> {
         if let Value::Null = value {
             Err(Panic::InvalidOperandValue)
         } else if self.stack.size == VM_STACK_CAPACITY {
@@ -151,7 +151,7 @@ impl VM {
         }
     }
 
-    fn stack_pop(&mut self) -> Result<Value, Panic> {
+    fn stack_pop(&mut self) -> VMResult<Value> {
         if self.stack.size == 0 {
             return Err(Panic::StackUnderflow);
         }
@@ -178,13 +178,11 @@ impl VM {
                 inst_limit,
             } => {
                 state.load_from_file(target_file)?;
-                let limit = match inst_limit {
-                    Some(l) if l <= state.program.size => l,
-                    _ => state.program.size,
-                };
-
-                for i in 0..limit {
-                    println!("{}", state.program.items[i]);
+                for i in 0..inst_limit
+                    .map(|l| if l <= state.program.size { l } else { 0 })
+                    .unwrap_or(0)
+                {
+                    println!("{}", state.program.get(i));
                 }
             }
             Disassemble {
@@ -200,10 +198,9 @@ impl VM {
             } => {
                 state.load_from_file(target_file)?;
                 let res = usm::assemble(state.program.get_all());
-                if let Some(f) = output_file {
-                    fs::write(f, res)
-                } else {
-                    io::stdout().write_all(res.as_bytes())
+                match output_file {
+                    Some(f) => fs::write(f, res),
+                    _ => io::stdout().write_all(res.as_bytes()),
                 }
                 .map_err(Panic::WriteToFileErr)?;
             }
@@ -222,7 +219,6 @@ impl VM {
 
                 let mut inst_count = 0;
                 let limit = inst_limit.unwrap_or(0);
-
                 while state.inst_ptr < state.program.size && limit != 0 && inst_count == limit {
                     if debug_inst {
                         println!(
@@ -277,7 +273,7 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let sub = match args.next() {
         Some(s) => s,
-        _ => return utils::print_usage_ua(""),
+        _ => return utils::print_usage(""),
     };
 
     let sub = sub.as_str();
@@ -287,7 +283,7 @@ fn main() {
             let mut inst_limit: Option<usize> = None;
             while let Some(arg) = args.next() {
                 match arg.as_str() {
-                    "-h" => return utils::print_usage_ua(sub),
+                    "-h" => return utils::print_usage(sub),
                     "-l" => match args.next() {
                         Some(limit) => match limit.parse::<usize>() {
                             Ok(l) => inst_limit = Some(l),
@@ -316,7 +312,7 @@ fn main() {
             let mut output_file: Option<String> = None;
             while let Some(arg) = args.next() {
                 match arg.as_str() {
-                    "-h" => return utils::print_usage_ua(sub),
+                    "-h" => return utils::print_usage(sub),
                     "-o" => output_file = args.next(),
                     f if Path::new(&f).is_file() => target_file = f.into(),
                     wrong_op if wrong_op.starts_with('-') => {
@@ -351,7 +347,7 @@ fn main() {
             while let Some(a) = args.next() {
                 match a.as_str() {
                     "-usm" => from_usm = true,
-                    "-h" => return utils::print_usage_ua(sub),
+                    "-h" => return utils::print_usage(sub),
                     "-ds" => debug_stack = true,
                     "-di" => debug_inst = true,
                     "-l" => match args.next() {
@@ -383,7 +379,7 @@ fn main() {
                 debug_stack,
             }
         }
-        "-h" => return utils::print_usage_ua(""),
+        "-h" => return utils::print_usage(""),
         wrong_sub if wrong_sub.starts_with('-') => {
             return eprintln!("ПОМИЛКА: Вказана помилкова підкоманда: {wrong_sub}")
         }

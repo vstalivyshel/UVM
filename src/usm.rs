@@ -96,9 +96,9 @@ impl InstructionKind {
             inst => return Err(Panic::InvalidInstruction(inst.to_string())),
         })
     }
-	fn try_from_idx(idx: u8) -> Result<Self, Panic> {
-    	use InstructionKind::*;
-    	let res = match idx {
+    fn try_from_idx(idx: u8) -> Result<Self, Panic> {
+        use InstructionKind::*;
+        let res = match idx {
             0 => Nop,
             1 => Push,
             2 => Dup,
@@ -114,8 +114,7 @@ impl InstructionKind {
         };
 
         Ok(res)
-
-}
+    }
     fn has_operand(&self) -> bool {
         use InstructionKind::*;
         match self {
@@ -182,7 +181,6 @@ impl Instruction {
     }
 
     pub fn deserialize(se: SerializedInst) -> Result<Instruction, Panic> {
-
         #[derive(Debug)]
         enum TypeOfValue {
             Float,
@@ -239,17 +237,14 @@ pub fn disassemble(source: String) -> Result<Array<Instruction, PROGRAM_INST_CAP
         };
     }
 
-    let mut token_strem = source
-        .lines()
-        .filter(|line| !line.trim_start().starts_with('#'))
-        .map(|line| match line.split_once('#') {
-            Some((l, _)) => l,
-            _ => line,
-        })
-        .flat_map(|line| line.split_whitespace());
     let mut program = Array::<Instruction, PROGRAM_INST_CAPACITY>::new();
     let mut lables_table = Array::<(usize, &str), PROGRAM_INST_CAPACITY>::new();
     let mut inst_addr = 0;
+    let mut token_strem = source
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .map(|line| line.split_once('#').map(|(l, _)| l).unwrap_or(line))
+        .flat_map(|line| line.split_whitespace());
 
     while let Some(token) = token_strem.next() {
         let token = token.trim();

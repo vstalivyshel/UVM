@@ -1,31 +1,7 @@
 use crate::{Instruction, InstructionKind, Panic, Value, PROGRAM_INST_CAPACITY};
 use std::{error, fmt};
 
-#[macro_export]
-macro_rules! inst {
-    ($kind:tt $operand:expr) => {
-        Instruction {
-            kind: $kind,
-            operand: $operand,
-        }
-    };
-
-    ($kind:expr) => {
-        Instruction {
-            kind: $kind,
-            operand: Value::Null,
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! prog {
-    ($($inst:tt $($operand:expr)?),*$(,)?) => {
-        [$(inst!($inst $($operand)?),)*]
-    };
-}
-
-pub fn print_usage_ua(sub: &str) {
+pub fn print_usage(sub: &str) {
     let general = "./uvm [ПІДКОМАНДА] [ОПЦ] <ФАЙЛ>
 
 [ПІДКОМАНДА]
