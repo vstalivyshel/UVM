@@ -266,14 +266,14 @@ pub fn disassemble(source: String) -> Result<Array<Instruction, PROGRAM_INST_CAP
                     "зціл" => Value::Int(try_parse!(val as isize)),
                     _ => Value::Null,
                 },
-                _ => Value::Uint(
-                    lables_table
-                        .items
-                        .iter()
-                        .find(|(_, label)| label.contains(op))
-                        .ok_or(Panic::InvalidOperandValue)?
-                        .0,
-                ),
+                _ => match lables_table
+                    .items
+                    .iter()
+                    .find(|(_, label)| label.contains(op))
+                {
+                    Some((addr, _)) => Value::Uint(*addr),
+                    _ => Value::Int(try_parse!(op as isize)),
+                },
             }
         }
 

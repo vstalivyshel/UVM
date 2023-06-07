@@ -1,5 +1,6 @@
 ## Ukrainian Virtual Machine  
 ### Very much WIP
+Like JVM, but in Ukrainian.  
 
 Source of inspiration: https://github.com/tsoding/bm
 
@@ -7,6 +8,8 @@ Source of inspiration: https://github.com/tsoding/bm
 - Learn things.  
 
 ### Usage:
+UVM bytecode "oject" file contains a serialized USM (Ukrainian assembly) instructions that can be executed using the `emu` subcommand.  
+Also, you can execute a USM file without translating it into bytecode using the `-usm` flag.  
 
 - emu - run the instructions from the provided file.
 ```
@@ -33,7 +36,7 @@ Source of inspiration: https://github.com/tsoding/bm
 ./uvm usm [OPT] <FILE>
 
 [OPT]
-    -o <OUTPUT FILE> - write translated into USM instructions into the <OUTPUT FILE>
+    -o <OUTPUT FILE> - write translated into USM instructions into the <OUTPUT FILE> (default is stdout)
 ```
 
 
@@ -43,16 +46,17 @@ Source of inspiration: https://github.com/tsoding/bm
 ./uvm dump [OPT] <FILE>
 [OPT]
     -l <NUM> - set a limit on dumped instructions
+    -usm - translate the USM instructions from the file <FILE> before dumping
 ```
 
-### Examples 
+### Examples (assembly)
 - Basics
 ```
 
-клади 60 	#  push 60 on the stack
+клади 60 	# push 60 on the stack
 клади 9  	# push 9 on the stack
 сума     	# sum the top values of the stack
-копію    	# duplicate the top value
+копію 0   	# duplicate the top value (stack indexed from zero)
 рівн     	# push 1 if two top values are equal, otherwise, push 0
 
 # Everything that have ':' as suffix will be treated as a label,
@@ -78,7 +82,7 @@ Source of inspiration: https://github.com/tsoding/bm
 рівн    	# check for equality: false, so push 0
 сума?   	# this instruction will be skipped: top == 0
 клади 2 	# the value doesn't need to be 1 to represent a true statement
-сума?   	# this will be executed: 2 != 0
+сума?   	# this will drop the top value and execute itself
 
 ```
 - For loop:

@@ -178,9 +178,10 @@ impl VM {
                 inst_limit,
             } => {
                 state.load_from_file(target_file)?;
+                let size = state.program.size;
                 for i in 0..inst_limit
-                    .map(|l| if l <= state.program.size { l } else { 0 })
-                    .unwrap_or(0)
+                    .map(|l| if l <= size { l } else { size })
+                    .unwrap_or(size)
                 {
                     println!("{}", state.program.get(i));
                 }
@@ -219,7 +220,11 @@ impl VM {
 
                 let mut inst_count = 0;
                 let limit = inst_limit.unwrap_or(0);
-                while state.inst_ptr < state.program.size && limit != 0 && inst_count == limit {
+                while state.inst_ptr < state.program.size {
+                    if limit != 0 && inst_count == limit {
+                        break;
+                    }
+
                     if debug_inst {
                         println!(
                             "+ ІНСТ {ptr} : {inst}",
