@@ -1,4 +1,4 @@
-use crate::{Instruction, InstructionKind, Panic, Value, PROGRAM_INST_CAPACITY};
+use crate::{Instruction, InstructionKind, Panic, Value };
 use std::{error, fmt};
 
 pub fn print_usage(sub: &str) {
@@ -73,7 +73,7 @@ impl<T: Copy + Default, const N: usize> Array<T, N> {
     }
 
     pub fn get_from_end(&self, idx: usize) -> T {
-        self.items[self.size - (idx + 1)]
+        self.items[if self.size == 0 && idx == 0 {self.size} else {self.size - (idx + 1)}]
     }
 
     pub fn get_last(&self) -> T {
@@ -152,17 +152,7 @@ impl fmt::Display for Panic {
             StackOverflow => write!(f, "Переповнений Стек"),
             StackUnderflow => write!(f, "Незаповненість Стека"),
             ValueOverflow => write!(f, "Перевищено Ліміт Цілого Числа"),
-            ValueUnderflow => write!(f, ""),
-            InvalidOperandValue => {
-                write!(f, "Невірний Операнд")
-            }
-            IlligalInstructionOperands => write!(f, "Неможливо Виконати Інструкцію"),
-            InstLimitkOverflow(size) => write!(
-                f,
-                "Перевищено Ліміт Інструкцій: {size} з доступних {PROGRAM_INST_CAPACITY}"
-            ),
-            InvalidBinaryInstruction => write!(f, "Нелегальна Інструкція"),
-            InvalidInstruction(inst) => write!(f, "Нелегальна Інструкція: {inst}"),
+            UsmError(e) => write!(f, "{e}"),
             ReadFileErr(err) => write!(f, "Неможливо Прочитати Файл: {err}"),
             WriteToFileErr(err) => write!(f, "Помилка Запусу До Файлу: {err}"),
             DivByZero => write!(f, "Ділення На Нуль"),

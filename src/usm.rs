@@ -13,32 +13,50 @@ pub enum Value {
 }
 
 impl Value {
-    pub fn into_float(self) -> Result<f64, Panic> {
+    fn try_parse<T: AsRef<str>>(token: T) -> Result<Self, ()> {
+        let token = token.as_ref().trim();
+        Ok(if token.contains('.') {
+            Value::Float(token.parse::<f64>().map_err(|_| ())?)
+        } else if let Some((val, suf)) = token.rsplit_once('_') {
+            match suf {
+                "дроб" => Value::Float(val.parse::<f64>().map_err(|_| ())?),
+                "зціл" => Value::Int(val.parse::<isize>().map_err(|_| ())?),
+                "ціл" => Value::Uint(val.parse::<usize>().map_err(|_| ())?),
+                _ => return Err(()),
+            }
+        } else if let Ok(val) = token.parse::<isize>() {
+            Value::Int(val)
+        } else {
+            return Err(());
+        })
+    }
+
+    pub fn into_float(self) -> f64 {
         use Value::*;
         match self {
-            Float(v) => Ok(v),
-            Int(v) => Ok(v as f64),
-            Uint(v) => Ok(v as f64),
-            Null => Err(Panic::InvalidOperandValue),
+            Float(v) => v,
+            Int(v) => v as f64,
+            Uint(v) => v as f64,
+            Null => panic!(),
         }
     }
 
-    pub fn into_int(self) -> Result<isize, Panic> {
+    pub fn into_int(self) -> isize {
         use Value::*;
         match self {
-            Float(v) => Ok(v as isize),
-            Int(v) => Ok(v),
-            Uint(v) => Ok(v as isize),
-            Null => Err(Panic::InvalidOperandValue),
+            Float(v) => v as isize,
+            Int(v) => v,
+            Uint(v) => v as isize,
+            Null => panic!(),
         }
     }
-    pub fn into_uint(self) -> Result<usize, Panic> {
+    pub fn into_uint(self) -> usize {
         use Value::*;
         match self {
-            Float(v) => Ok(v as usize),
-            Int(v) => Ok(v as usize),
-            Uint(v) => Ok(v),
-            Null => Err(Panic::InvalidOperandValue),
+            Float(v) => v as usize,
+            Int(v) => v as usize,
+            Uint(v) => v,
+            Null => panic!(),
         }
     }
 
@@ -53,9 +71,9 @@ impl Value {
     pub fn into_type_of(self, other: Value) -> Self {
         use Value::*;
         match other {
-            Float(_) => Float(self.into_float().unwrap_or_default()),
-            Int(_) => Int(self.into_int().unwrap_or_default()),
-            Uint(_) => Uint(self.into_uint().unwrap_or_default()),
+            Float(_) => Float(self.into_float()),
+            Int(_) => Int(self.into_int()),
+            Uint(_) => Uint(self.into_uint()),
             Null => Null,
         }
     }
@@ -79,7 +97,7 @@ pub enum InstructionKind {
 }
 
 impl InstructionKind {
-    fn try_from<T: AsRef<str>>(src: T) -> Result<Self, Panic> {
+    fn try_parse<T: AsRef<str>>(src: T) -> Result<Self, ()> {
         use InstructionKind::*;
         Ok(match src.as_ref() {
             "неоп" => Nop,
@@ -93,12 +111,13 @@ impl InstructionKind {
             "діли" => Div,
             "сума" => Sum,
             "нерівн" => NotEq,
-            inst => return Err(Panic::InvalidInstruction(inst.to_string())),
+            _ => return Err(()),
         })
     }
-    fn try_from_idx(idx: u8) -> Result<Self, Panic> {
+
+    fn try_from_idx(idx: u8) -> Self {
         use InstructionKind::*;
-        let res = match idx {
+        match idx {
             0 => Nop,
             1 => Push,
             2 => Dup,
@@ -110,25 +129,15 @@ impl InstructionKind {
             8 => Mul,
             9 => Div,
             10 => NotEq,
-            _ => return Err(Panic::InvalidBinaryInstruction),
-        };
-
-        Ok(res)
+            _ => panic!(),
+        }
     }
+
     fn has_operand(&self) -> bool {
         use InstructionKind::*;
         match self {
-            Nop => false,
-            Push => true,
-            Dup => true,
-            Drop => false,
-            Eq => false,
-            Jump => true,
-            Sum => false,
-            Sub => false,
-            Mul => false,
-            Div => false,
-            NotEq => false,
+            Push | Dup | Jump => true,
+            _ => false,
         }
     }
 }
@@ -141,6 +150,24 @@ pub struct Instruction {
 }
 
 impl Instruction {
+    pub fn deserialize(se: SerializedInst) -> Self {
+        let kind = InstructionKind::try_from_idx(se[0]);
+        let inst_opts = se[1];
+        let operand_chunck = &se[2..INST_CHUNCK_SIZE];
+        let chunck = operand_chunck.try_into().unwrap();
+        let (n, operand) = match inst_opts {
+            200.. => (200, Value::Float(f64::from_le_bytes(chunck))),
+            100.. => (100, Value::Int(isize::from_le_bytes(chunck))),
+            10.. => (10, Value::Uint(usize::from_le_bytes(chunck))),
+            _ => (10, Value::Null),
+        };
+
+        Self {
+            kind,
+            operand,
+            conditional: inst_opts % n != 0,
+        }
+    }
     // Serialized instruction contains 10 bytes:
     // 		1 - kind of instruction
     // 		2 - information about instruction and it's operand
@@ -152,7 +179,7 @@ impl Instruction {
     //
     // 		3..=10 - bytes representation of the value
 
-    pub fn serialize(&self) -> Result<SerializedInst, Panic> {
+    pub fn serialize(&self) -> SerializedInst {
         let mut se = [0; INST_CHUNCK_SIZE];
         se[0] = self.kind as u8;
 
@@ -177,45 +204,7 @@ impl Instruction {
             Null => {}
         }
 
-        Ok(se)
-    }
-
-    pub fn deserialize(se: SerializedInst) -> Result<Instruction, Panic> {
-        #[derive(Debug)]
-        enum TypeOfValue {
-            Float,
-            Uint,
-            Int,
-            Null,
-        }
-
-        use TypeOfValue::*;
-
-        let kind = InstructionKind::try_from_idx(se[0])?;
-        let inst_opts = se[1];
-        let (n, type_value) = match inst_opts {
-            200.. => (200, Float),
-            100.. => (100, Uint),
-            10.. => (10, Int),
-            _ => (0, Null),
-        };
-
-        let conditional = inst_opts % n != 0;
-        let operand_chunck = &se[2..INST_CHUNCK_SIZE];
-        let chunck = operand_chunck.try_into().unwrap();
-        let operand = match type_value {
-            Null if kind.has_operand() => return Err(Panic::InvalidOperandValue),
-            Float => Value::Float(f64::from_le_bytes(chunck)),
-            Int => Value::Int(isize::from_le_bytes(chunck)),
-            Uint => Value::Uint(usize::from_le_bytes(chunck)),
-            Null => Value::Null,
-        };
-
-        Ok(Instruction {
-            kind,
-            operand,
-            conditional,
-        })
+        se
     }
 }
 
@@ -230,59 +219,145 @@ pub fn assemble(source: &[Instruction]) -> String {
         .collect::<String>()
 }
 
-pub fn disassemble(source: String) -> Result<Array<Instruction, PROGRAM_INST_CAPACITY>, Panic> {
-    macro_rules! try_parse {
-        ($val:ident as $t:ty) => {
-            $val.parse::<$t>().map_err(|_| Panic::InvalidOperandValue)?
-        };
-    }
-
-    let mut program = Array::<Instruction, PROGRAM_INST_CAPACITY>::new();
-    let mut lables_table = Array::<(usize, &str), PROGRAM_INST_CAPACITY>::new();
-    let mut inst_addr = 0;
-    let mut token_strem = source
+fn tokenizer(src: String) {
+    let lines = src
         .lines()
         .filter(|line| !line.trim_start().starts_with('#'))
-        .map(|line| line.split_once('#').map(|(l, _)| l).unwrap_or(line))
-        .flat_map(|line| line.split_whitespace());
+        .map(|line| line.split_once('#').map(|(l, _)| l).unwrap_or(line));
 
-    while let Some(token) = token_strem.next() {
-        let token = token.trim();
-        if token.ends_with(':') {
-            lables_table.push((inst_addr, token.strip_suffix(':').unwrap()));
-            continue;
-        }
-        let conditional = token.ends_with('?');
-        let token = token.strip_suffix('?').unwrap_or(token);
-        let kind = InstructionKind::try_from(token)?;
-        let with_operand = kind.has_operand();
-        let mut operand = Value::Null;
-        if with_operand {
-            let op = token_strem.next().ok_or(Panic::InvalidOperandValue)?;
-            operand = match op.split_once('_') {
-                Some((val, suf)) => match suf.trim() {
-                    "дроб" => Value::Float(try_parse!(val as f64)),
-                    "ціл" => Value::Uint(try_parse!(val as usize)),
-                    "зціл" => Value::Int(try_parse!(val as isize)),
-                    _ => Value::Null,
-                },
-                _ => Value::Uint(
-                    lables_table
-                        .items
-                        .iter()
-                        .find(|(_, label)| label.contains(op))
-                        .ok_or(Panic::InvalidOperandValue)?
-                        .0,
-                ),
+	#[derive(Default)]
+    struct InvalidInst {
+        err_msg: String,
+        body: String,
+        operand: String,
+    }
+
+    enum TokenKind {
+        Label,
+        Inst { cond: bool },
+        Value { suf: Option<String> },
+    }
+
+    struct Token {
+        kind: TokenKind,
+        body: String,
+    }
+
+    let mut tokens = Vec::<Token>::new();
+    let mut current_instruction = Instruction::default();
+    let mut current_invalid_inst = InvalidInst::default();
+    let mut current_value = Value::default();
+    let mut current = String::new();
+    for (line, line_count) in lines.zip(1..) {
+        for (token, token_count) in line.split_whitespace().zip(1..) {
+            match InstructionKind::try_parse(token) {
+                Ok(kind) => current_instruction.kind = kind,
+                _ => current_invalid_inst.body =
             }
         }
+    }
+}
 
-        program.push(Instruction {
-            kind,
-            operand,
-            conditional,
-        });
-        inst_addr += 1;
+pub fn disassemble(source: String) -> Result<Array<Instruction, PROGRAM_INST_CAPACITY>, Panic> {
+    fn fmt_err<T: std::fmt::Display + AsRef<str>>(
+        msg: T,
+        line: usize,
+        token_count: usize,
+        token: T,
+        next_token: T,
+        prev_inst: T,
+    ) -> Panic {
+        Panic::UsmError(format!(
+            "ПОМИЛКА: на лініЇ {line}, токен {token_count}
+
+  {prev_line}    {prev_inst}
+  {line}    {token} {next_token}   <-- {msg}
+                     ",
+            prev_line = line - 1
+        ))
+    }
+
+    struct InvalidInst {
+        err_msg: String,
+        body: String,
+        operand: String,
+    }
+
+    struct Label {
+        name: String,
+        addr: usize,
+    }
+
+    let mut program = Vec::<Result<Instruction, InvalidInst>>::new();
+    let mut lables_table = Vec::<Label>::new();
+    let mut inst_addr = 0;
+    let mut token_count = 0;
+    let lines = source
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .map(|line| line.split_once('#').map(|(l, _)| l).unwrap_or(line));
+
+    for (line, line_num) in lines.zip(1..) {
+        let mut tokens = line.split_whitespace();
+        while let Some(token) = tokens.next() {
+            token_count += 1;
+            let token = token.trim();
+            if let Some(label) = token.strip_suffix(':') {
+                lables_table.push((inst_addr, label));
+                continue;
+            }
+            let conditional = token.ends_with('?');
+            let token = token.strip_suffix('?').unwrap_or(token);
+            let kind = InstructionKind::try_parse(token).map_err(|_| {
+                fmt_err(
+                    "невідома інструкція",
+                    line_num,
+                    token_count,
+                    token,
+                    tokens.next().unwrap_or(""),
+                    program.get_last().to_string().as_str(),
+                )
+            })?;
+            let with_operand = kind.has_operand();
+            let operand = if with_operand {
+                let token = tokens.next().ok_or(fmt_err(
+                    "інструкція без операнду",
+                    line_num,
+                    token_count,
+                    token,
+                    tokens.next().unwrap_or(""),
+                    program.get_last().to_string().as_str(),
+                ))?;
+                token_count += 1;
+                if let Ok(val) = Value::try_parse(token) {
+                    val
+                } else if let Some((val, _)) = lables_table
+                    .items
+                    .iter()
+                    .find(|(_, label)| label.contains(token))
+                {
+                    Value::Uint(*val)
+                } else {
+                    return Err(fmt_err(
+                        "нелегальний операнд",
+                        line_num,
+                        token_count,
+                        token,
+                        tokens.next().unwrap_or(""),
+                        program.get_last().to_string().as_str(),
+                    ));
+                }
+            } else {
+                Value::Null
+            };
+
+            program.push(Ok(Instruction {
+                kind,
+                operand,
+                conditional,
+            }));
+            inst_addr += 1;
+        }
     }
 
     Ok(program)
