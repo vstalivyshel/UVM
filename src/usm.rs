@@ -135,10 +135,7 @@ impl InstructionKind {
 
     fn has_operand(&self) -> bool {
         use InstructionKind::*;
-        match self {
-            Push | Dup | Jump => true,
-            _ => false,
-        }
+        matches!(self, Push | Dup | Jump)
     }
 }
 
@@ -149,63 +146,176 @@ pub struct Instruction {
     pub conditional: bool,
 }
 
-impl Instruction {
-    pub fn deserialize(se: SerializedInst) -> Self {
-        let kind = InstructionKind::try_from_idx(se[0]);
-        let inst_opts = se[1];
-        let operand_chunck = &se[2..INST_CHUNCK_SIZE];
-        let chunck = operand_chunck.try_into().unwrap();
-        let (n, operand) = match inst_opts {
-            200.. => (200, Value::Float(f64::from_le_bytes(chunck))),
-            100.. => (100, Value::Int(isize::from_le_bytes(chunck))),
-            10.. => (10, Value::Uint(usize::from_le_bytes(chunck))),
-            _ => (10, Value::Null),
-        };
+pub fn deserialize(se: SerializedInst) -> Instruction {
+    let kind = InstructionKind::try_from_idx(se[0]);
+    let inst_opts = se[1];
+    let operand_chunck = &se[2..INST_CHUNCK_SIZE];
+    let chunck = operand_chunck.try_into().unwrap();
+    let (n, operand) = match inst_opts {
+        200.. => (200, Value::Float(f64::from_le_bytes(chunck))),
+        100.. => (100, Value::Int(isize::from_le_bytes(chunck))),
+        10.. => (10, Value::Uint(usize::from_le_bytes(chunck))),
+        _ => (10, Value::Null),
+    };
 
-        Self {
-            kind,
-            operand,
-            conditional: inst_opts % n != 0,
+    Instruction {
+        kind,
+        operand,
+        conditional: inst_opts % n != 0,
+    }
+}
+
+// Serialized instruction contains 10 bytes:
+// 		1 - kind of instruction
+// 		2 - information about instruction and it's operand
+// 			1/0 -conditional/not
+// 			i < 10 - operand is Value::Null
+// 			i >= 10 - operand is i64
+// 			i >= 100 - operand is u64
+// 			i >= 200 - operand is f64
+//
+// 		3..=10 - bytes representation of the value
+
+pub fn serialize(inst: Instruction) -> SerializedInst {
+    let mut se = [0; INST_CHUNCK_SIZE];
+    se[0] = inst.kind as u8;
+
+    if inst.conditional {
+        se[1] += 1;
+    }
+
+    use Value::*;
+    match inst.operand {
+        Float(i) => {
+            se[1] += 200;
+            se[2..].copy_from_slice(i.to_le_bytes().as_slice());
+        }
+        Uint(i) => {
+            se[1] += 100;
+            se[2..].copy_from_slice(i.to_le_bytes().as_slice());
+        }
+        Int(i) => {
+            se[1] += 10;
+            se[2..].copy_from_slice(i.to_le_bytes().as_slice());
+        }
+        Null => {}
+    }
+
+    se
+}
+
+#[derive(PartialEq)]
+enum Token {
+    Value(Value),
+    Inst(InstructionKind, bool),
+    LabelExpand(String),
+}
+
+fn parse(source: String) -> (Vec<Token>, Vec<(String, usize)>) {
+    let mut tokens = Vec::<Token>::new();
+    let mut labels = Vec::<(String, usize)>::new();
+    let mut inst_count = 0;
+    let lines = source
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .map(|line| line.split_once('#').map(|(l, _)| l).unwrap_or(line));
+
+    for line in lines {
+        for word in line.split_whitespace() {
+            let word = word.trim();
+
+            if let Some(label) = word.strip_suffix(':') {
+                labels.push((label.into(), inst_count));
+                continue;
+            }
+
+            tokens.push(if let Some(inst) = word.strip_suffix('?') {
+                if let Ok(kind) = InstructionKind::try_parse(inst) {
+                    Token::Inst(kind, true)
+                } else {
+                    Token::LabelExpand(word.into())
+                }
+            } else if let Ok(val) = Value::try_parse(word) {
+                Token::Value(val)
+            } else if let Ok(kind) = InstructionKind::try_parse(word) {
+                inst_count += 1;
+                Token::Inst(kind, false)
+            } else {
+                Token::LabelExpand(word.into())
+            })
         }
     }
-    // Serialized instruction contains 10 bytes:
-    // 		1 - kind of instruction
-    // 		2 - information about instruction and it's operand
-    // 			1/0 -conditional/not
-    // 			i < 10 - operand is Value::Null
-    // 			i >= 10 - operand is i64
-    // 			i >= 100 - operand is u64
-    // 			i >= 200 - operand is f64
-    //
-    // 		3..=10 - bytes representation of the value
 
-    pub fn serialize(&self) -> SerializedInst {
-        let mut se = [0; INST_CHUNCK_SIZE];
-        se[0] = self.kind as u8;
+    (tokens, labels)
+}
 
-        if self.conditional {
-            se[1] += 1;
+pub fn disassemble(src: String) -> Result<Array<Instruction, PROGRAM_INST_CAPACITY>, Panic> {
+    let mut program = Array::<Instruction, PROGRAM_INST_CAPACITY>::new();
+    let (src, labels_table) = parse(src);
+
+    for token in src {
+        match token {
+            Token::Inst(kind, conditional) => {
+                program.push(Instruction {
+                    kind,
+                    conditional,
+                    operand: crate::Value::Null,
+                });
+            }
+            Token::LabelExpand(name) => {
+                let last = program.get_last_mut();
+                if let InstructionKind::Nop = last.kind {
+                    return Err(Panic::ParseError(format!("не передбачений операнд у вигляді лейблу \"{name}\" для відсутьої інструкції")));
+                }
+                if last.kind.has_operand() {
+                    last.operand = Value::Uint(
+                        labels_table
+                            .iter()
+                            .find(|l| l.0.contains(name.as_str()))
+                            .ok_or(Panic::ParseError(format!(
+                                "неіснуючий лейбл \"{name}\" для інструкції \"{kind}\"",
+                                kind = last.kind
+                            )))?
+                            .1,
+                    );
+                } else {
+                    return Err(Panic::ParseError(format!(
+                        "спроба використати лейбл \"{name}\" як не передбачений операнд для інструкції \"{kind}\"",
+                        kind = last.kind
+                    )));
+                }
+            }
+            Token::Value(val) => {
+                let last = program.get_last_mut();
+                if let InstructionKind::Nop = last.kind {
+                    return Err(Panic::ParseError(format!(
+                        "не передбачений операнд \"{val}\" для відсутьої інструкції"
+                    )));
+                }
+                if last.kind.has_operand() {
+                    last.operand = val;
+                } else {
+                    return Err(Panic::ParseError(format!(
+                        "не передбачений операнд \"{val}\" для інструкції \"{kind}\"",
+                        kind = last.kind
+                    )));
+                }
+            }
         }
-
-        use Value::*;
-        match self.operand {
-            Float(i) => {
-                se[1] += 200;
-                se[2..].copy_from_slice(i.to_le_bytes().as_slice());
-            }
-            Uint(i) => {
-                se[1] += 100;
-                se[2..].copy_from_slice(i.to_le_bytes().as_slice());
-            }
-            Int(i) => {
-                se[1] += 10;
-                se[2..].copy_from_slice(i.to_le_bytes().as_slice());
-            }
-            Null => {}
-        }
-
-        se
     }
+
+    if let Some(e) = program
+        .get_all()
+        .iter()
+        .find(|i| i.kind.has_operand() && i.operand.is_null())
+    {
+        return Err(Panic::ParseError(format!(
+            "відсутнє значення для інструкції \"{kind}\"",
+            kind = e.kind
+        )));
+    }
+
+    Ok(program)
 }
 
 pub fn assemble(source: &[Instruction]) -> String {
@@ -217,148 +327,4 @@ pub fn assemble(source: &[Instruction]) -> String {
             inst
         })
         .collect::<String>()
-}
-
-fn tokenizer(src: String) {
-    let lines = src
-        .lines()
-        .filter(|line| !line.trim_start().starts_with('#'))
-        .map(|line| line.split_once('#').map(|(l, _)| l).unwrap_or(line));
-
-	#[derive(Default)]
-    struct InvalidInst {
-        err_msg: String,
-        body: String,
-        operand: String,
-    }
-
-    enum TokenKind {
-        Label,
-        Inst { cond: bool },
-        Value { suf: Option<String> },
-    }
-
-    struct Token {
-        kind: TokenKind,
-        body: String,
-    }
-
-    let mut tokens = Vec::<Token>::new();
-    let mut current_instruction = Instruction::default();
-    let mut current_invalid_inst = InvalidInst::default();
-    let mut current_value = Value::default();
-    let mut current = String::new();
-    for (line, line_count) in lines.zip(1..) {
-        for (token, token_count) in line.split_whitespace().zip(1..) {
-            match InstructionKind::try_parse(token) {
-                Ok(kind) => current_instruction.kind = kind,
-                _ => current_invalid_inst.body =
-            }
-        }
-    }
-}
-
-pub fn disassemble(source: String) -> Result<Array<Instruction, PROGRAM_INST_CAPACITY>, Panic> {
-    fn fmt_err<T: std::fmt::Display + AsRef<str>>(
-        msg: T,
-        line: usize,
-        token_count: usize,
-        token: T,
-        next_token: T,
-        prev_inst: T,
-    ) -> Panic {
-        Panic::UsmError(format!(
-            "ПОМИЛКА: на лініЇ {line}, токен {token_count}
-
-  {prev_line}    {prev_inst}
-  {line}    {token} {next_token}   <-- {msg}
-                     ",
-            prev_line = line - 1
-        ))
-    }
-
-    struct InvalidInst {
-        err_msg: String,
-        body: String,
-        operand: String,
-    }
-
-    struct Label {
-        name: String,
-        addr: usize,
-    }
-
-    let mut program = Vec::<Result<Instruction, InvalidInst>>::new();
-    let mut lables_table = Vec::<Label>::new();
-    let mut inst_addr = 0;
-    let mut token_count = 0;
-    let lines = source
-        .lines()
-        .filter(|line| !line.trim_start().starts_with('#'))
-        .map(|line| line.split_once('#').map(|(l, _)| l).unwrap_or(line));
-
-    for (line, line_num) in lines.zip(1..) {
-        let mut tokens = line.split_whitespace();
-        while let Some(token) = tokens.next() {
-            token_count += 1;
-            let token = token.trim();
-            if let Some(label) = token.strip_suffix(':') {
-                lables_table.push((inst_addr, label));
-                continue;
-            }
-            let conditional = token.ends_with('?');
-            let token = token.strip_suffix('?').unwrap_or(token);
-            let kind = InstructionKind::try_parse(token).map_err(|_| {
-                fmt_err(
-                    "невідома інструкція",
-                    line_num,
-                    token_count,
-                    token,
-                    tokens.next().unwrap_or(""),
-                    program.get_last().to_string().as_str(),
-                )
-            })?;
-            let with_operand = kind.has_operand();
-            let operand = if with_operand {
-                let token = tokens.next().ok_or(fmt_err(
-                    "інструкція без операнду",
-                    line_num,
-                    token_count,
-                    token,
-                    tokens.next().unwrap_or(""),
-                    program.get_last().to_string().as_str(),
-                ))?;
-                token_count += 1;
-                if let Ok(val) = Value::try_parse(token) {
-                    val
-                } else if let Some((val, _)) = lables_table
-                    .items
-                    .iter()
-                    .find(|(_, label)| label.contains(token))
-                {
-                    Value::Uint(*val)
-                } else {
-                    return Err(fmt_err(
-                        "нелегальний операнд",
-                        line_num,
-                        token_count,
-                        token,
-                        tokens.next().unwrap_or(""),
-                        program.get_last().to_string().as_str(),
-                    ));
-                }
-            } else {
-                Value::Null
-            };
-
-            program.push(Ok(Instruction {
-                kind,
-                operand,
-                conditional,
-            }));
-            inst_addr += 1;
-        }
-    }
-
-    Ok(program)
 }

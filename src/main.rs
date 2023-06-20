@@ -17,7 +17,7 @@ type VMResult<T> = Result<T, Panic>;
 pub enum Panic {
     ReadFileErr(io::Error),
     WriteToFileErr(io::Error),
-    UsmError(String),
+    ParseError(String),
     StackOverflow,
     StackUnderflow,
     ValueOverflow,
@@ -38,7 +38,7 @@ impl VM {
             .chunks(INST_CHUNCK_SIZE)
         {
             self.program
-                .push(Instruction::deserialize(inst_chunck.try_into().unwrap()));
+                .push(usm::deserialize(inst_chunck.try_into().unwrap()));
         }
 
         Ok(())
@@ -46,13 +46,10 @@ impl VM {
 
     fn save_into_file(&self, file: Option<String>) -> VMResult<()> {
         let mut buf = Array::<SerializedInst, PROGRAM_INST_CAPACITY>::new();
-
         for inst in self.program.get_all().iter() {
-            buf.push(inst.serialize());
+            buf.push(usm::serialize(*inst));
         }
-
         let ser_prog = buf.get_all().concat();
-
         match file {
             Some(f) => fs::write(f, ser_prog.as_slice()),
             _ => io::stdout().lock().write_all(ser_prog.as_slice()),
@@ -98,10 +95,10 @@ impl VM {
                 let _ = self.stack_pop()?;
                 Ok(())
             }
-            Dup => self.stack_push(self.stack_take(inst.operand.into_uint())?),
+            Dup => self.stack_push(self.stack_get(inst.operand.into_uint())?),
             Jump => {
                 let addr = inst.operand.into_uint();
-                if addr > self.inst_ptr {
+                if addr > self.program.size {
                     return Err(Panic::StackUnderflow);
                 }
                 self.inst_ptr = addr;
@@ -109,8 +106,8 @@ impl VM {
                 return Ok(());
             }
             NotEq | Eq => {
-                let a = self.stack_take(0)?;
-                let b = self.stack_take(1)?;
+                let a = self.stack_get(0)?;
+                let b = self.stack_get(1)?;
                 self.stack_push(Value::Uint(
                     ((inst.kind == Eq) & (a == b)) as usize | (a != b) as usize,
                 ))
@@ -125,7 +122,7 @@ impl VM {
         result
     }
 
-    fn stack_take(&self, idx: usize) -> VMResult<Value> {
+    fn stack_get(&self, idx: usize) -> VMResult<Value> {
         if self.stack.size == 0 || idx > self.stack.size {
             return Err(Panic::StackUnderflow);
         }
@@ -218,7 +215,7 @@ impl VM {
 
                 let mut inst_count = 0;
                 let limit = inst_limit.unwrap_or(0);
-                while state.inst_ptr < state.program.size  {
+                while state.inst_ptr < state.program.size {
                     if limit != 0 && inst_count == limit {
                         break;
                     }

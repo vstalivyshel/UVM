@@ -1,4 +1,4 @@
-use crate::{Instruction, InstructionKind, Panic, Value };
+use crate::{Instruction, InstructionKind, Panic, Value};
 use std::{error, fmt};
 
 pub fn print_usage(sub: &str) {
@@ -72,21 +72,45 @@ impl<T: Copy + Default, const N: usize> Array<T, N> {
         }
     }
 
+    fn is_empty(&self) -> bool {
+        self.size == 0
+    }
+
     pub fn get_from_end(&self, idx: usize) -> T {
-        self.items[if self.size == 0 && idx == 0 {self.size} else {self.size - (idx + 1)}]
+        self.items[if self.is_empty() && idx == 0 {
+            self.size
+        } else {
+            self.size - (idx + 1)
+        }]
+    }
+
+    pub fn get_from_end_mut(&mut self, idx: usize) -> &mut T {
+        &mut self.items[if self.is_empty() && idx == 0 {
+            self.size
+        } else {
+            self.size - (idx + 1)
+        }]
     }
 
     pub fn get_last(&self) -> T {
         self.get_from_end(0)
     }
 
-    pub fn push(&mut self, item: T) {
-        self.items[self.size] = item;
-        self.size += 1;
+    pub fn get_last_mut(&mut self) -> &mut T {
+        self.get_from_end_mut(0)
     }
 
     pub fn get(&self, idx: usize) -> T {
         self.items[idx]
+    }
+
+    pub fn _get_mut(&mut self, idx: usize) -> &mut T {
+        &mut self.items[idx]
+    }
+
+    pub fn push(&mut self, item: T) {
+        self.items[self.size] = item;
+        self.size += 1;
     }
 
     pub fn pop(&mut self) -> T {
@@ -106,9 +130,9 @@ impl<T: Copy + Default, const N: usize> Array<T, N> {
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Value::Float(v) => write!(f, "{v}"),
-            Value::Uint(v) => write!(f, "{v}"),
-            Value::Int(v) => write!(f, "{v}"),
+            Value::Float(v) => write!(f, "{v}_дроб"),
+            Value::Uint(v) => write!(f, "{v}_ціл"),
+            Value::Int(v) => write!(f, "{v}_зціл"),
             Value::Null => write!(f, "_"),
         }
     }
@@ -152,7 +176,7 @@ impl fmt::Display for Panic {
             StackOverflow => write!(f, "Переповнений Стек"),
             StackUnderflow => write!(f, "Незаповненість Стека"),
             ValueOverflow => write!(f, "Перевищено Ліміт Цілого Числа"),
-            UsmError(e) => write!(f, "{e}"),
+            ParseError(e) => write!(f, "Помилка Перекладу: {e}"),
             ReadFileErr(err) => write!(f, "Неможливо Прочитати Файл: {err}"),
             WriteToFileErr(err) => write!(f, "Помилка Запусу До Файлу: {err}"),
             DivByZero => write!(f, "Ділення На Нуль"),
