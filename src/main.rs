@@ -168,13 +168,6 @@ impl VM {
                 inst_limit,
                 from_usm,
             } => {
-<<<<<<< HEAD
-                state.load_from_file(target_file)?;
-                let size = state.program.size;
-                for i in 0..inst_limit
-                    .map(|l| if l <= size { l } else { size })
-                    .unwrap_or(size)
-=======
                 if from_usm {
                     state.disassemble_from_file(target_file)?
                 } else {
@@ -184,7 +177,6 @@ impl VM {
                 for i in 0..inst_limit
                     .map(|l| if l <= state.program.size { l } else { 0 })
                     .unwrap_or(state.program.size)
->>>>>>> descr_err
                 {
                     println!("{}", state.program.get(i));
                 }
@@ -227,10 +219,6 @@ impl VM {
                     if limit != 0 && inst_count == limit {
                         break;
                     }
-<<<<<<< HEAD
-
-=======
->>>>>>> descr_err
                     if debug_inst {
                         println!(
                             "+ ІНСТ {ptr} : {inst}",
