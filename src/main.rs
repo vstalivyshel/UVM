@@ -15,17 +15,12 @@ type VMResult<T> = Result<T, Panic>;
 
 #[derive(Debug)]
 pub enum Panic {
+    ReadFileErr(io::Error),
+    WriteToFileErr(io::Error),
+    ParseError(String),
     StackOverflow,
     StackUnderflow,
     ValueOverflow,
-    ValueUnderflow,
-    InvalidOperandValue,
-    IlligalInstructionOperands,
-    InvalidInstruction(String),
-    InvalidBinaryInstruction,
-    InstLimitkOverflow(usize),
-    ReadFileErr(io::Error),
-    WriteToFileErr(io::Error),
     DivByZero,
 }
 
@@ -43,7 +38,7 @@ impl VM {
             .chunks(INST_CHUNCK_SIZE)
         {
             self.program
-                .push(Instruction::deserialize(inst_chunck.try_into().unwrap())?);
+                .push(usm::deserialize(inst_chunck.try_into().unwrap()));
         }
 
         Ok(())
@@ -51,13 +46,10 @@ impl VM {
 
     fn save_into_file(&self, file: Option<String>) -> VMResult<()> {
         let mut buf = Array::<SerializedInst, PROGRAM_INST_CAPACITY>::new();
-
         for inst in self.program.get_all().iter() {
-            buf.push(inst.serialize()?);
+            buf.push(usm::serialize(*inst));
         }
-
         let ser_prog = buf.get_all().concat();
-
         match file {
             Some(f) => fs::write(f, ser_prog.as_slice()),
             _ => io::stdout().lock().write_all(ser_prog.as_slice()),
@@ -75,7 +67,7 @@ impl VM {
     fn execute_instruction(&mut self) -> VMResult<()> {
         let inst = self.program.get(self.inst_ptr);
 
-        if inst.conditional && self.stack_pop()?.into_uint()? == 0 {
+        if inst.conditional && self.stack_pop()?.into_uint() == 0 {
             self.inst_ptr += 1;
             return Ok(());
         }
@@ -103,19 +95,19 @@ impl VM {
                 let _ = self.stack_pop()?;
                 Ok(())
             }
-            Dup => self.stack_push(self.stack_take(inst.operand.into_uint()?)?),
+            Dup => self.stack_push(self.stack_get(inst.operand.into_uint())?),
             Jump => {
-                let addr = inst.operand.into_uint()?;
-                if addr > self.inst_ptr {
-                    return Err(Panic::InvalidOperandValue);
+                let addr = inst.operand.into_uint();
+                if addr > self.program.size {
+                    return Err(Panic::StackUnderflow);
                 }
                 self.inst_ptr = addr;
 
                 return Ok(());
             }
             NotEq | Eq => {
-                let a = self.stack_take(0)?;
-                let b = self.stack_take(1)?;
+                let a = self.stack_get(0)?;
+                let b = self.stack_get(1)?;
                 self.stack_push(Value::Uint(
                     ((inst.kind == Eq) & (a == b)) as usize | (a != b) as usize,
                 ))
@@ -130,11 +122,9 @@ impl VM {
         result
     }
 
-    fn stack_take(&self, idx: usize) -> VMResult<Value> {
-        if self.stack.size == 0 {
+    fn stack_get(&self, idx: usize) -> VMResult<Value> {
+        if self.stack.size == 0 || idx > self.stack.size {
             return Err(Panic::StackUnderflow);
-        } else if idx > self.stack.size {
-            return Err(Panic::InvalidOperandValue);
         }
 
         Ok(self.stack.get_from_end(idx))
@@ -142,7 +132,7 @@ impl VM {
 
     fn stack_push(&mut self, value: Value) -> VMResult<()> {
         if let Value::Null = value {
-            Err(Panic::InvalidOperandValue)
+            Err(Panic::StackUnderflow)
         } else if self.stack.size == VM_STACK_CAPACITY {
             Err(Panic::StackOverflow)
         } else {
@@ -176,12 +166,25 @@ impl VM {
             Dump {
                 target_file,
                 inst_limit,
+                from_usm,
             } => {
+<<<<<<< HEAD
                 state.load_from_file(target_file)?;
                 let size = state.program.size;
                 for i in 0..inst_limit
                     .map(|l| if l <= size { l } else { size })
                     .unwrap_or(size)
+=======
+                if from_usm {
+                    state.disassemble_from_file(target_file)?
+                } else {
+                    state.load_from_file(target_file)?;
+                }
+
+                for i in 0..inst_limit
+                    .map(|l| if l <= state.program.size { l } else { 0 })
+                    .unwrap_or(state.program.size)
+>>>>>>> descr_err
                 {
                     println!("{}", state.program.get(i));
                 }
@@ -224,7 +227,10 @@ impl VM {
                     if limit != 0 && inst_count == limit {
                         break;
                     }
+<<<<<<< HEAD
 
+=======
+>>>>>>> descr_err
                     if debug_inst {
                         println!(
                             "+ ІНСТ {ptr} : {inst}",
@@ -256,6 +262,7 @@ enum Configuration {
     Dump {
         target_file: String,
         inst_limit: Option<usize>,
+        from_usm: bool,
     },
     Run {
         target_file: String,
@@ -286,8 +293,10 @@ fn main() {
         "dump" => {
             let mut target_file = String::new();
             let mut inst_limit: Option<usize> = None;
+            let mut from_usm = false;
             while let Some(arg) = args.next() {
                 match arg.as_str() {
+                    "-usm" => from_usm = true,
                     "-h" => return utils::print_usage(sub),
                     "-l" => match args.next() {
                         Some(limit) => match limit.parse::<usize>() {
@@ -310,6 +319,7 @@ fn main() {
             Configuration::Dump {
                 target_file,
                 inst_limit,
+                from_usm,
             }
         }
         "usm" | "dusm" => {
@@ -392,6 +402,6 @@ fn main() {
     };
 
     if let Err(e) = VM::start(config) {
-        eprintln!("ПОМИЛКА: {e}");
+        eprintln!("{e}");
     }
 }
