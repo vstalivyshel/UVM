@@ -127,8 +127,8 @@ Also, you can execute a USM file without translating it into bytecode using the 
 різн           ;; 10 float - 5 uint = 5 uint
 
 ;; Use this example, if you want to change the type of value for further operations:
-клади 10 ;; push 10 int
-клади 5 ;; push 5 int
+клади 10       ;; push 10 int
+клади 5        ;; push 5 int
 
 клади 0_дроб   ;; push 0 float
 сума           ;;  5 int + 0 float = 5 float
@@ -146,9 +146,9 @@ Also, you can execute a USM file without translating it into bytecode using the 
 ;; Or:
 клади 5
 
-клади 0       ;; push 0
-міняй 1       ;; spaw 0 and 5
-різн          ;; substruct 0 - 5
+клади 0        ;; push 0
+міняй 1        ;; swap 0 and 5
+різн           ;; substruct: 0 - 5
 
 ```
 - For loop:
