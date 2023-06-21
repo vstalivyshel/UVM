@@ -1,7 +1,7 @@
 use crate::{Instruction, InstructionKind, Panic, Value};
 use std::{error, fmt};
 
-pub fn print_usage(sub: &str) {
+pub fn print_usage<S: AsRef<str>>(sub: S) {
     let general = "./uvm [ПІДКОМАНДА] [ОПЦ] <ФАЙЛ>
 
 [ПІДКОМАНДА]
@@ -42,7 +42,7 @@ pub fn print_usage(sub: &str) {
 
     eprintln!(
         "{}",
-        match sub {
+        match sub.as_ref() {
             "emu" => emu,
             "dusm" => dusm,
             "usm" => usm,
@@ -72,24 +72,12 @@ impl<T: Copy + Default, const N: usize> Array<T, N> {
         }
     }
 
-    fn is_empty(&self) -> bool {
-        self.size == 0
-    }
-
     pub fn get_from_end(&self, idx: usize) -> T {
-        self.items[if self.is_empty() && idx == 0 {
-            self.size
-        } else {
-            self.size - (idx + 1)
-        }]
+        self.items[self.size - (idx + 1)]
     }
 
     pub fn get_from_end_mut(&mut self, idx: usize) -> &mut T {
-        &mut self.items[if self.is_empty() && idx == 0 {
-            self.size
-        } else {
-            self.size - (idx + 1)
-        }]
+        &mut self.items[self.size - (idx + 1)]
     }
 
     pub fn get_last(&self) -> T {
@@ -165,7 +153,7 @@ impl fmt::Display for InstructionKind {
             Div => write!(f, "діли"),
             Sum => write!(f, "сума"),
             NotEq => write!(f, "нерівн"),
-            ExternPrint => write!(f, "%покажи"),
+            Extern => write!(f, "ззовні"),
             Return => write!(f, "вертай"),
             Call => write!(f, "клич"),
             Halt => write!(f, "кінчай"),
@@ -180,7 +168,7 @@ impl fmt::Display for Panic {
         match self {
             StackOverflow => write!(f, "Переповнений Стек"),
             StackUnderflow => write!(f, "Незаповненість Стека"),
-            ValueOverflow => write!(f, "Перевищено Ліміт Цілого Числа"),
+            ValueOverflow => write!(f, "Перевищено Ліміт Значення"),
             ParseError(e) => write!(f, "Помилка Перекладу: {e}"),
             ReadFileErr(err) => write!(f, "Неможливо Прочитати Файл: {err}"),
             WriteToFileErr(err) => write!(f, "Помилка Запусу До Файлу: {err}"),

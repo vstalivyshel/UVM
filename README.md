@@ -77,10 +77,6 @@ Also, you can execute a USM file without translating it into bytecode using the 
 	клич клади_число_42 ;; 'клич' (call) instruction will push the address of the next
                         ;; instruction on the stack and will jump to the specified label
 
-	%покажи	            ;; Instructions that are prefixed with '%' is just bindings to the rust functions.
-	                    ;; '%покажи' (%print) will print top value of the stack.
-	                    ;; this is temporary solution for debuggin perpose
-
 	кінчай              ;; the 'stop' instruction that will terminate the program
 	кинь                ;; the 'drop' will not be executed
 	
@@ -88,7 +84,7 @@ Also, you can execute a USM file without translating it into bytecode using the 
 	клади 21            ;; push 21
 	клади 2             ;; push 2
 	множ                ;; multiply
-	міняй 1             ;; at this point, the stack will have 42 at the top (0 idx) and the address of the '%покажи' instruction (1 idx)
+	міняй 1             ;; at this point, the stack will have 42 at the top (0 idx) and after is the address of the 'кінчай' instruction (1 idx)
 	                    ;; so we need to swap them to pop the instruction address and jump to it, leaving 42 untoched 
 
 	вертай              ;; 'return' will pop the top value and jump to the instruction with this address

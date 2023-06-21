@@ -2,6 +2,7 @@ use crate::{Array, Panic, PROGRAM_INST_CAPACITY};
 
 pub const INST_CHUNCK_SIZE: usize = 10;
 pub type SerializedInst = [u8; INST_CHUNCK_SIZE];
+const COMMENT_TOKEN: &str = ";;";
 
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub enum Value {
@@ -54,7 +55,7 @@ impl Value {
         use Value::*;
         match self {
             Float(v) => v.abs() as usize,
-            Int(v) => v.abs() as usize,
+            Int(v) => v.unsigned_abs(),
             Uint(v) => v,
             Null => panic!(),
         }
@@ -94,7 +95,7 @@ pub enum InstructionKind {
     Mul = 8,
     Div = 9,
     NotEq = 10,
-    ExternPrint = 11,
+    Extern = 11,
     Return = 12,
     Call = 13,
     Halt = 14,
@@ -116,7 +117,7 @@ impl InstructionKind {
             "діли" => Div,
             "сума" => Sum,
             "нерівн" => NotEq,
-            "%покажи" => ExternPrint,
+            "ззовні" => Extern,
             "вертай" => Return,
             "клич" => Call,
             "кінчай" => Halt,
@@ -139,7 +140,7 @@ impl InstructionKind {
             8 => Mul,
             9 => Div,
             10 => NotEq,
-            11 => ExternPrint,
+            11 => Extern,
             12 => Return,
             13 => Call,
             14 => Halt,
@@ -150,7 +151,7 @@ impl InstructionKind {
 
     fn has_operand(&self) -> bool {
         use InstructionKind::*;
-        matches!(self, Push | Dup | Jump | Call | Swap)
+        matches!(self, Push | Dup | Jump | Call | Swap | Extern)
     }
 }
 
@@ -232,9 +233,9 @@ fn parse(source: String) -> (Vec<Token>, Vec<(String, usize)>) {
 
     for line in source
         .lines()
-        .filter(|line| !line.trim_start().starts_with(";;"))
+        .filter(|line| !line.trim_start().starts_with(COMMENT_TOKEN))
     {
-        let line = line.split_once(";;").map(|(l, _)| l).unwrap_or(line);
+        let line = line.split_once(COMMENT_TOKEN).map(|(l, _)| l).unwrap_or(line);
         for word in line.split_whitespace() {
             let word = word.trim();
 

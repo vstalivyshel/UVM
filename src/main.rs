@@ -82,17 +82,23 @@ impl VM {
         }
 
         macro_rules! math {
-            ($op:tt) => {{
+            ($op:tt, $func_op:tt) => {{
                 let a = self.stack_pop()?;
                 let b = self.stack_pop()?.into_type_of(a);
                 use Value::*;
-                match (a, b) {
-                    (Int(a), Int(b)) => self.stack_push(Int(b $op a)),
-                    (Uint(a), Uint(b)) => self.stack_push(Uint(b $op a)),
-                    (Float(a), Float(b)) => self.stack_push(Float(b $op a)),
+                self.stack_push(match (a, b) {
+                    (Int(a), Int(b)) => Value::Int(b.$func_op(a).ok_or(Panic::ValueOverflow)?),
+                    (Uint(a), Uint(b)) => Value::Uint(b.$func_op(a).ok_or(Panic::ValueOverflow)?),
+                    (Float(a), Float(b)) => {
+                        let r = b $op a;
+                        if !r.is_normal() {
+                            return Err(Panic::ValueOverflow);
+                        }
+                        Value::Float(r)
+                    }
                     // We are not allowed to push or pop Null values
                     _ => unreachable!(),
-                }
+                })?
             }};
         }
 
@@ -100,20 +106,19 @@ impl VM {
         match inst.kind {
             Nop => {}
             Push => self.stack_push(inst.operand)?,
-            Drop => {
-                let _ = self.stack_pop()?;
-            }
+            Drop => _ = self.stack_pop()?,
             Dup => self.stack_push(self.stack_get(inst.operand.into_uint())?)?,
             Call | Jump => {
-                if let Call = inst.kind {
+                if matches!(inst.kind, Call) {
                     self.stack_push(Value::Uint(self.inst_ptr + 1))?;
                 }
                 let addr = inst.operand.into_uint();
-                if addr > self.program.size {
-                    return Err(Panic::StackUnderflow);
-                }
-                self.inst_ptr = addr;
-                return Ok(());
+                return (addr < self.program.size)
+                    .then(|| {
+                        self.inst_ptr = addr;
+                        Ok(())
+                    })
+                    .unwrap_or(Err(Panic::StackUnderflow));
             }
             NotEq | Eq => {
                 let a = self.stack_get(0)?;
@@ -122,11 +127,16 @@ impl VM {
                     ((inst.kind == Eq) & (a == b)) as usize | (a != b) as usize,
                 ))?;
             }
-            Sum => math!(+)?,
-            Sub => math!(-)?,
-            Mul => math!(*)?,
-            Div => math!(+)?,
-            ExternPrint => println!("{}", self.stack_get(0)?),
+            Sum => math!(+ , checked_add),
+            Sub => math!(- , checked_sub),
+            Mul => math!(* , checked_mul),
+            Div => math!(/ , checked_div),
+
+            // TBD
+            Extern => match inst.operand.into_uint() {
+                0 => println!("{}", self.stack_get(0)?),
+                _ => panic!(),
+            },
             Return => {
                 self.inst_ptr = self.stack_pop()?.into_uint();
                 return Ok(());
@@ -136,6 +146,9 @@ impl VM {
                 return Ok(());
             }
             Swap => {
+                if self.stack.size < 2 {
+                    return Err(Panic::StackUnderflow);
+                }
                 let idx = inst.operand.into_uint();
                 let saved_top = self.stack_get(0)?;
                 let saved_target = self.stack_get(idx)?;
@@ -152,19 +165,15 @@ impl VM {
     }
 
     fn stack_get_mut(&mut self, idx: usize) -> VMResult<&mut Value> {
-        if self.stack.size == 0 || idx > self.stack.size {
-            return Err(Panic::StackUnderflow);
-        }
-
-        Ok(self.stack.get_from_end_mut(idx))
+        (idx <= self.stack.size)
+            .then_some(self.stack.get_from_end_mut(idx))
+            .ok_or(Panic::StackUnderflow)
     }
 
     fn stack_get(&self, idx: usize) -> VMResult<Value> {
-        if self.stack.size == 0 || idx > self.stack.size {
-            return Err(Panic::StackUnderflow);
-        }
-
-        Ok(self.stack.get_from_end(idx))
+        (idx <= self.stack.size)
+            .then_some(self.stack.get_from_end(idx))
+            .ok_or(Panic::StackUnderflow)
     }
 
     fn stack_push(&mut self, value: Value) -> VMResult<()> {
@@ -179,16 +188,10 @@ impl VM {
     }
 
     fn stack_pop(&mut self) -> VMResult<Value> {
-        if self.stack.size == 0 {
-            return Err(Panic::StackUnderflow);
-        }
-
-        let value = self.stack.pop();
-        if value.is_null() {
-            return Err(Panic::StackUnderflow);
-        }
-
-        Ok(value)
+        (self.stack.size > 0)
+            .then_some(self.stack.pop())
+            .filter(|v| !v.is_null())
+            .ok_or(Panic::StackUnderflow)
     }
 }
 
@@ -303,6 +306,10 @@ fn main() {
         Some(s) => s,
         _ => return utils::print_usage(""),
     };
+
+    if args.len() < 1 {
+        return utils::print_usage(sub);
+    }
 
     let sub = sub.as_str();
     let config = match sub {
