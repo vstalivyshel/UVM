@@ -24,7 +24,7 @@ pub enum Panic {
     DivByZero,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct VM {
     stack: Array<Value, VM_STACK_CAPACITY>,
     program: Array<Instruction, PROGRAM_INST_CAPACITY>,
@@ -44,7 +44,14 @@ impl VM {
         Ok(())
     }
 
-    fn save_into_file(&self, file: Option<String>) -> VMResult<()> {
+    fn disassemble_from_file<P: AsRef<Path>>(&mut self, path: P) -> VMResult<()> {
+        self.program =
+            usm::disassemble(fs::read_to_string(path.as_ref()).map_err(Panic::ReadFileErr)?)?;
+
+        Ok(())
+    }
+
+    fn save_into_file<P: AsRef<Path>>(&self, file: Option<P>) -> VMResult<()> {
         let mut buf = Array::<SerializedInst, PROGRAM_INST_CAPACITY>::new();
         for inst in self.program.get_all().iter() {
             buf.push(usm::serialize(*inst));
@@ -57,11 +64,13 @@ impl VM {
         .map_err(Panic::WriteToFileErr)
     }
 
-    fn disassemble_from_file<P: AsRef<Path>>(&mut self, path: P) -> VMResult<()> {
-        self.program =
-            usm::disassemble(fs::read_to_string(path.as_ref()).map_err(Panic::ReadFileErr)?)?;
-
-        Ok(())
+    fn assemble_into_file<P: AsRef<Path>>(&self, file: Option<P>) -> VMResult<()> {
+        let src = usm::assemble(self.program.get_all());
+        match file {
+            Some(f) => fs::write(f, src.as_bytes()),
+            _ => io::stdout().lock().write_all(src.as_bytes()),
+        }
+        .map_err(Panic::WriteToFileErr)
     }
 
     fn execute_instruction(&mut self) -> VMResult<()> {
@@ -78,9 +87,9 @@ impl VM {
                 let b = self.stack_pop()?.into_type_of(a);
                 use Value::*;
                 match (a, b) {
-                    (Int(a), Int(b)) => self.stack_push(Int(a $op b)),
-                    (Uint(a), Uint(b)) => self.stack_push(Uint(a $op b)),
-                    (Float(a), Float(b)) => self.stack_push(Float(a $op b)),
+                    (Int(a), Int(b)) => self.stack_push(Int(b $op a)),
+                    (Uint(a), Uint(b)) => self.stack_push(Uint(b $op a)),
+                    (Float(a), Float(b)) => self.stack_push(Float(b $op a)),
                     // We are not allowed to push or pop Null values
                     _ => unreachable!(),
                 }
@@ -88,21 +97,22 @@ impl VM {
         }
 
         use InstructionKind::*;
-        let result = match inst.kind {
-            Nop => Ok(()),
-            Push => self.stack_push(inst.operand),
+        match inst.kind {
+            Nop => {}
+            Push => self.stack_push(inst.operand)?,
             Drop => {
                 let _ = self.stack_pop()?;
-                Ok(())
             }
-            Dup => self.stack_push(self.stack_get(inst.operand.into_uint())?),
-            Jump => {
+            Dup => self.stack_push(self.stack_get(inst.operand.into_uint())?)?,
+            Call | Jump => {
+                if let Call = inst.kind {
+                    self.stack_push(Value::Uint(self.inst_ptr + 1))?;
+                }
                 let addr = inst.operand.into_uint();
                 if addr > self.program.size {
                     return Err(Panic::StackUnderflow);
                 }
                 self.inst_ptr = addr;
-
                 return Ok(());
             }
             NotEq | Eq => {
@@ -110,16 +120,43 @@ impl VM {
                 let b = self.stack_get(1)?;
                 self.stack_push(Value::Uint(
                     ((inst.kind == Eq) & (a == b)) as usize | (a != b) as usize,
-                ))
+                ))?;
             }
-            Sum => math!(+),
-            Sub => math!(-),
-            Mul => math!(*),
-            Div => math!(+),
-        };
+            Sum => math!(+)?,
+            Sub => math!(-)?,
+            Mul => math!(*)?,
+            Div => math!(+)?,
+            ExternPrint => println!("{}", self.stack_get(0)?),
+            Return => {
+                self.inst_ptr = self.stack_pop()?.into_uint();
+                return Ok(());
+            }
+            Halt => {
+                self.inst_ptr = self.program.size;
+                return Ok(());
+            }
+            Swap => {
+                let idx = inst.operand.into_uint();
+                let saved_top = self.stack_get(0)?;
+                let saved_target = self.stack_get(idx)?;
+                let top = self.stack_get_mut(0)?;
+                *top = saved_target;
+                let target = self.stack_get_mut(idx)?;
+                *target = saved_top;
+            }
+        }
 
         self.inst_ptr += 1;
-        result
+
+        Ok(())
+    }
+
+    fn stack_get_mut(&mut self, idx: usize) -> VMResult<&mut Value> {
+        if self.stack.size == 0 || idx > self.stack.size {
+            return Err(Panic::StackUnderflow);
+        }
+
+        Ok(self.stack.get_from_end_mut(idx))
     }
 
     fn stack_get(&self, idx: usize) -> VMResult<Value> {
@@ -153,96 +190,87 @@ impl VM {
 
         Ok(value)
     }
+}
 
-    fn start(config: Configuration) -> VMResult<()> {
-        let mut state = Self {
-            stack: Array::new(),
-            program: Array::new(),
-            inst_ptr: 0,
-        };
+fn start(config: Configuration) -> VMResult<()> {
+    let mut state = VM::default();
 
-        use Configuration::*;
-        match config {
-            Dump {
-                target_file,
-                inst_limit,
-                from_usm,
-            } => {
-                if from_usm {
-                    state.disassemble_from_file(target_file)?
-                } else {
-                    state.load_from_file(target_file)?;
-                }
-
-                for i in 0..inst_limit
-                    .map(|l| if l <= state.program.size { l } else { 0 })
-                    .unwrap_or(state.program.size)
-                {
-                    println!("{}", state.program.get(i));
-                }
-            }
-            Disassemble {
-                target_file,
-                output_file,
-            } => {
-                state.disassemble_from_file(target_file)?;
-                state.save_into_file(output_file)?;
-            }
-            Assemble {
-                target_file,
-                output_file,
-            } => {
+    use Configuration::*;
+    match config {
+        Dump {
+            target_file,
+            inst_limit,
+            from_usm,
+        } => {
+            if from_usm || target_file.ends_with(".usm") {
+                state.disassemble_from_file(target_file)?
+            } else {
                 state.load_from_file(target_file)?;
-                let res = usm::assemble(state.program.get_all());
-                match output_file {
-                    Some(f) => fs::write(f, res),
-                    _ => io::stdout().write_all(res.as_bytes()),
-                }
-                .map_err(Panic::WriteToFileErr)?;
             }
-            Run {
-                target_file,
-                from_usm,
-                inst_limit,
-                debug_inst,
-                debug_stack,
-            } => {
-                if from_usm {
-                    state.disassemble_from_file(target_file)?;
-                } else {
-                    state.load_from_file(target_file)?;
-                };
 
-                let mut inst_count = 0;
-                let limit = inst_limit.unwrap_or(0);
-                while state.inst_ptr < state.program.size {
-                    if limit != 0 && inst_count == limit {
-                        break;
-                    }
-                    if debug_inst {
-                        println!(
-                            "+ ІНСТ {ptr} : {inst}",
-                            ptr = state.inst_ptr,
-                            inst = state.program.get(state.inst_ptr),
-                        );
-                    }
+            for i in 0..inst_limit
+                .map(|l| if l <= state.program.size { l } else { 0 })
+                .unwrap_or(state.program.size)
+            {
+                println!("{}", state.program.get(i));
+            }
+        }
+        Disassemble {
+            target_file,
+            output_file,
+        } => {
+            state.disassemble_from_file(target_file)?;
+            state.save_into_file(output_file)?;
+        }
+        Assemble {
+            target_file,
+            output_file,
+        } => {
+            state.load_from_file(target_file)?;
+            state.assemble_into_file(output_file)?;
+        }
+        Run {
+            target_file,
+            from_usm,
+            inst_limit,
+            debug_inst,
+            debug_stack,
+        } => {
+            if from_usm || target_file.ends_with(".usm") {
+                state.disassemble_from_file(target_file)?;
+            } else {
+                state.load_from_file(target_file)?;
+            };
 
-                    state.execute_instruction()?;
-                    inst_count += 1;
+            let mut inst_count = 0;
+            let limit = inst_limit.unwrap_or(0);
+            while state.inst_ptr < state.program.size {
+                if limit != 0 && inst_count == limit {
+                    break;
+                }
+                if debug_inst {
+                    println!(
+                        "+ ІНСТ {ptr} : {inst}",
+                        ptr = state.inst_ptr,
+                        inst = state.program.get(state.inst_ptr),
+                    );
+                }
 
-                    if debug_stack {
-                        println!(
-                            "СТЕК [{size}] : {v}",
-                            size = state.stack.size,
-                            v = state.stack.get_last()
-                        );
-                    }
+                state.execute_instruction()?;
+                inst_count += 1;
+
+                if debug_stack {
+                    println!(
+                        "СТЕК [{size}] : {v}",
+                        size = state.stack.size,
+                        v = state.stack.get_last()
+                    );
                 }
             }
         }
-
-        Ok(())
     }
+
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -383,13 +411,13 @@ fn main() {
             }
         }
         "-h" => return utils::print_usage(""),
-        wrong_sub if wrong_sub.starts_with('-') => {
+        wrong_sub if !wrong_sub.starts_with('-') => {
             return eprintln!("ПОМИЛКА: Вказана помилкова підкоманда: {wrong_sub}")
         }
         wrong_file => return eprintln!("ПОМИЛКА: Вказано неіснуючий файл: {wrong_file}"),
     };
 
-    if let Err(e) = VM::start(config) {
+    if let Err(e) = start(config) {
         eprintln!("{e}");
     }
 }

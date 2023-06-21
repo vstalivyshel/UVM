@@ -165,6 +165,11 @@ impl fmt::Display for InstructionKind {
             Div => write!(f, "діли"),
             Sum => write!(f, "сума"),
             NotEq => write!(f, "нерівн"),
+            ExternPrint => write!(f, "%покажи"),
+            Return => write!(f, "вертай"),
+            Call => write!(f, "клич"),
+            Halt => write!(f, "кінчай"),
+            Swap => write!(f, "міняй"),
         }
     }
 }

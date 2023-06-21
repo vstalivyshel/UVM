@@ -15,9 +15,7 @@ pub enum Value {
 impl Value {
     fn try_parse<T: AsRef<str>>(token: T) -> Result<Self, ()> {
         let token = token.as_ref().trim();
-        Ok(if token.contains('.') {
-            Value::Float(token.parse::<f64>().map_err(|_| ())?)
-        } else if let Some((val, suf)) = token.rsplit_once('_') {
+        Ok(if let Some((val, suf)) = token.rsplit_once('_') {
             match suf {
                 "дроб" => Value::Float(val.parse::<f64>().map_err(|_| ())?),
                 "зціл" => Value::Int(val.parse::<isize>().map_err(|_| ())?),
@@ -26,6 +24,8 @@ impl Value {
             }
         } else if let Ok(val) = token.parse::<isize>() {
             Value::Int(val)
+        } else if let Ok(f) = token.parse::<f64>().map_err(|_| ()) {
+            Value::Float(f)
         } else {
             return Err(());
         })
@@ -53,8 +53,8 @@ impl Value {
     pub fn into_uint(self) -> usize {
         use Value::*;
         match self {
-            Float(v) => v as usize,
-            Int(v) => v as usize,
+            Float(v) => v.abs() as usize,
+            Int(v) => v.abs() as usize,
             Uint(v) => v,
             Null => panic!(),
         }
@@ -94,6 +94,11 @@ pub enum InstructionKind {
     Mul = 8,
     Div = 9,
     NotEq = 10,
+    ExternPrint = 11,
+    Return = 12,
+    Call = 13,
+    Halt = 14,
+    Swap = 15,
 }
 
 impl InstructionKind {
@@ -111,6 +116,11 @@ impl InstructionKind {
             "діли" => Div,
             "сума" => Sum,
             "нерівн" => NotEq,
+            "%покажи" => ExternPrint,
+            "вертай" => Return,
+            "клич" => Call,
+            "кінчай" => Halt,
+            "міняй" => Swap,
             _ => return Err(()),
         })
     }
@@ -129,13 +139,18 @@ impl InstructionKind {
             8 => Mul,
             9 => Div,
             10 => NotEq,
+            11 => ExternPrint,
+            12 => Return,
+            13 => Call,
+            14 => Halt,
+            15 => Swap,
             _ => panic!(),
         }
     }
 
     fn has_operand(&self) -> bool {
         use InstructionKind::*;
-        matches!(self, Push | Dup | Jump)
+        matches!(self, Push | Dup | Jump | Call | Swap)
     }
 }
 
@@ -204,10 +219,9 @@ pub fn serialize(inst: Instruction) -> SerializedInst {
     se
 }
 
-#[derive(PartialEq)]
 enum Token {
     Value(Value),
-    Inst(InstructionKind, bool),
+    Inst(Instruction),
     LabelExpand(String),
 }
 
@@ -215,12 +229,12 @@ fn parse(source: String) -> (Vec<Token>, Vec<(String, usize)>) {
     let mut tokens = Vec::<Token>::new();
     let mut labels = Vec::<(String, usize)>::new();
     let mut inst_count = 0;
-    let lines = source
-        .lines()
-        .filter(|line| !line.trim_start().starts_with('#'))
-        .map(|line| line.split_once('#').map(|(l, _)| l).unwrap_or(line));
 
-    for line in lines {
+    for line in source
+        .lines()
+        .filter(|line| !line.trim_start().starts_with(";;"))
+    {
+        let line = line.split_once(";;").map(|(l, _)| l).unwrap_or(line);
         for word in line.split_whitespace() {
             let word = word.trim();
 
@@ -230,16 +244,25 @@ fn parse(source: String) -> (Vec<Token>, Vec<(String, usize)>) {
             }
 
             tokens.push(if let Some(inst) = word.strip_suffix('?') {
-                if let Ok(kind) = InstructionKind::try_parse(inst) {
-                    Token::Inst(kind, true)
-                } else {
-                    Token::LabelExpand(word.into())
-                }
+                InstructionKind::try_parse(inst)
+                    .map(|kind| {
+                        inst_count += 1;
+                        Token::Inst(Instruction {
+                            kind,
+                            operand: Value::Null,
+                            conditional: true,
+                        })
+                    })
+                    .unwrap_or(Token::LabelExpand(word.into()))
             } else if let Ok(val) = Value::try_parse(word) {
                 Token::Value(val)
             } else if let Ok(kind) = InstructionKind::try_parse(word) {
                 inst_count += 1;
-                Token::Inst(kind, false)
+                Token::Inst(Instruction {
+                    kind,
+                    operand: Value::Null,
+                    conditional: false,
+                })
             } else {
                 Token::LabelExpand(word.into())
             })
@@ -255,13 +278,7 @@ pub fn disassemble(src: String) -> Result<Array<Instruction, PROGRAM_INST_CAPACI
 
     for token in src {
         match token {
-            Token::Inst(kind, conditional) => {
-                program.push(Instruction {
-                    kind,
-                    conditional,
-                    operand: crate::Value::Null,
-                });
-            }
+            Token::Inst(inst) => program.push(inst),
             Token::LabelExpand(name) => {
                 let last = program.get_last_mut();
                 if let InstructionKind::Nop = last.kind {
@@ -273,7 +290,7 @@ pub fn disassemble(src: String) -> Result<Array<Instruction, PROGRAM_INST_CAPACI
                             .iter()
                             .find(|l| l.0.contains(name.as_str()))
                             .ok_or(Panic::ParseError(format!(
-                                "неіснуючий лейбл \"{name}\" для інструкції \"{kind}\"",
+                                "спроба використати неіснуючий лейбл \"{name}\" для інструкції \"{kind}\"",
                                 kind = last.kind
                             )))?
                             .1,
@@ -328,4 +345,3 @@ pub fn assemble(source: &[Instruction]) -> String {
         })
         .collect::<String>()
 }
-
