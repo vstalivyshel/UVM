@@ -168,8 +168,8 @@ pub fn deserialize(se: SerializedInst) -> Instruction {
     let chunck = operand_chunck.try_into().unwrap();
     let (n, operand) = match inst_opts {
         200.. => (200, Value::Float(f64::from_le_bytes(chunck))),
-        100.. => (100, Value::Int(isize::from_le_bytes(chunck))),
-        10.. => (10, Value::Uint(usize::from_le_bytes(chunck))),
+        100.. => (100, Value::Uint(usize::from_le_bytes(chunck))),
+        10.. => (10, Value::Int(isize::from_le_bytes(chunck))),
         _ => (10, Value::Null),
     };
 
